@@ -1,0 +1,510 @@
+// Game rules for one biome run: swarm, pickups, hazards, the rising Shadow, flash, scoring.
+
+import { clamp, damp, TAU } from '../core/math';
+import { Level, type Lantern } from './level';
+import { Swarm, FREE, STUCK } from './swarm';
+
+export type GameEvent =
+  | { t: 'larva'; x: number; y: number; n: number }
+  | { t: 'lantern'; x: number; y: number; k: number }
+  | { t: 'flash'; perfect: boolean }
+  | { t: 'noBlask' }
+  | { t: 'batWarn'; side: number }
+  | { t: 'bite'; n: number }
+  | { t: 'caught' }
+  | { t: 'shadowLoss'; n: number }
+  | { t: 'revive' }
+  | { t: 'finish' }
+  | { t: 'over' }
+  | { t: 'hint'; id: string };
+
+export type Particle = {
+  x: number; y: number; vx: number; vy: number;
+  life: number; max: number; size: number;
+  r: number; g: number; b: number; kind: number; grav: number; drag: number;
+};
+
+export type Bat = {
+  x: number; y: number; vx: number; vy: number; t: number;
+  flee: number; bites: number; phase: number;
+};
+
+export type BatWarn = { side: number; y: number; t: number; speed: number };
+
+export type Shock = { x: number; y: number; t: number; R: number; perfect: boolean };
+
+export const SWARM_RGB: [number, number, number] = [0.62, 1.0, 0.28];
+
+const START_FLIES = 200;
+const MAX_ALIVE = 800;
+const FLASH_COST = 35;
+const PERFECT_COST = 10;
+const BAT_BITES = 16;
+
+export class Game {
+  level: Level;
+  swarm = new Swarm();
+  time = 0;
+  state: 'play' | 'reviving' | 'finished' | 'over' = 'play';
+  stateT = 0;
+  camX = 0;
+  camY = 400;
+  viewW = 600;
+  viewH = 1100;
+  shadowY = -600;
+  blask = 60;
+  score = 0;
+  maxY = 0;
+  lanternsLit = 0;
+  larvaeWoken = 0;
+  perfects = 0;
+  lost = 0;
+  reviveUsed = false;
+  lastLantern: Lantern | null = null;
+  bats: Bat[] = [];
+  warns: BatWarn[] = [];
+  particles: Particle[] = [];
+  shock: Shock | null = null;
+  events: GameEvent[] = [];
+  private hintIdx = 0;
+  private flashCd = 0;
+  private biteSoundCd = 0;
+  private caughtCd = 0;
+  private shadowAcc = 0;
+  private dynHints = new Set<string>();
+  finishBonus = 0;
+  /** Menu backdrop: swarm only, no hazards. */
+  demo = false;
+
+  constructor(seed: number) {
+    this.level = new Level(seed);
+    this.swarm.spawn(0, 260, START_FLIES, 120);
+    this.swarm.tx = 0;
+    this.swarm.ty = 300;
+    this.swarm.cx = 0;
+    this.swarm.cy = 260;
+    this.camY = 260 + 1100 * 0.12;
+  }
+
+  get progress() {
+    return clamp(this.maxY / this.level.height, 0, 1);
+  }
+  get heightScore() {
+    return Math.floor(this.maxY / 10);
+  }
+  get total() {
+    return this.score + this.heightScore + this.finishBonus;
+  }
+
+  // ------------------------------------------------------------ input
+  setTarget(x: number, y: number) {
+    const s = this.swarm;
+    const hw = this.level.wallAt(1, y) - 10;
+    const lw = this.level.wallAt(-1, y) + 10;
+    x = clamp(x, lw, hw);
+    y = clamp(y, this.camY - this.viewH / 2 + 40, this.camY + this.viewH / 2 - 40);
+    // keep the target on a leash so it can't run away from a blocked swarm
+    const dx = x - s.cx, dy = y - s.cy;
+    const d = Math.hypot(dx, dy), max = 240 + s.radius;
+    if (d > max) {
+      x = s.cx + (dx / d) * max;
+      y = s.cy + (dy / d) * max;
+    }
+    s.tx = x;
+    s.ty = y;
+  }
+
+  tryFlash() {
+    if (this.state !== 'play' || this.flashCd > 0) return;
+    const s = this.swarm;
+    const perfect = s.order > 0.55 && Math.cos(s.psi) > 0.72 && s.free >= 8;
+    const cost = perfect ? PERFECT_COST : FLASH_COST;
+    if (this.blask < cost) {
+      this.events.push({ t: 'noBlask' });
+      return;
+    }
+    this.blask -= cost;
+    this.flashCd = 0.35;
+    const R = (180 + 6 * Math.sqrt(Math.max(s.free, 1))) * (perfect ? 1.5 : 1);
+    const cx = s.cx, cy = s.cy;
+    this.shock = { x: cx, y: cy, t: 0, R, perfect };
+    s.flashGlow = perfect ? 2.4 : 1.6;
+    s.scatterPhases();
+    // webs burn, captives are freed
+    for (let w = 0; w < this.level.webs.length; w++) {
+      const web = this.level.webs[w];
+      if (web.broken) continue;
+      if (Math.hypot(web.x - cx, web.y - cy) < R + web.r) {
+        web.broken = true;
+        web.burn = 1;
+        for (let i = 0; i < s.n; i++) {
+          if (s.state[i] === STUCK && s.web[i] === w) {
+            s.state[i] = FREE;
+            s.web[i] = -1;
+            s.inWeb[i] = w;
+            s.timer[i] = 0;
+            s.vx[i] = (Math.random() - 0.5) * 200;
+            s.vy[i] = (Math.random() - 0.5) * 200;
+          }
+        }
+        for (const a of web.spokes) {
+          for (let k = 0; k < 5; k++) {
+            const rr = Math.random() * web.r;
+            this.emit(web.x + Math.cos(a) * rr, web.y + Math.sin(a) * rr, 1, 0.55, 0.2, 3, 40, 0.8, 4, -30);
+          }
+        }
+      }
+    }
+    for (const b of this.bats) if (Math.hypot(b.x - cx, b.y - cy) < R + 30) b.flee = 1;
+    for (const l of this.level.lanterns) if (!l.lit && Math.hypot(l.x - cx, l.y - cy) < R) this.lightLantern(l);
+    if (cy - this.shadowY < R + 500) this.shadowY -= perfect ? 320 : 200;
+    for (let k = 0; k < (perfect ? 60 : 36); k++) {
+      const a = Math.random() * TAU, v = 120 + Math.random() * 260;
+      this.particles.push({ x: cx, y: cy, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 0, max: 0.7 + Math.random() * 0.5, size: 3 + Math.random() * 4, r: 1, g: 1, b: 0.7, kind: 3, grav: 0, drag: 2.2 });
+    }
+    if (perfect) {
+      this.perfects++;
+      this.score += 25;
+    }
+    this.events.push({ t: 'flash', perfect });
+  }
+
+  // ------------------------------------------------------------ update
+  update(dt: number) {
+    const s = this.swarm;
+    const L = this.level;
+    this.time += dt;
+    this.stateT += dt;
+    this.flashCd = Math.max(0, this.flashCd - dt);
+    this.biteSoundCd -= dt;
+    this.caughtCd -= dt;
+
+    if (this.state === 'finished') {
+      s.tx = 0;
+      s.ty = s.cy + 120;
+      s.guiding = true;
+    }
+
+    s.update(dt, this.time, L);
+
+    if (this.demo) {
+      this.updateLanterns(dt);
+      this.updateParticles(dt);
+      this.camY += (s.cy + this.viewH * 0.12 - this.camY) * damp(2, dt);
+      return;
+    }
+
+    if (this.state === 'play') {
+      this.blask = Math.min(100, this.blask + dt * 1.0);
+      this.updateShadow(dt);
+      this.updateWebs(dt);
+      this.updateBats(dt);
+      this.updatePickups(dt);
+      this.updateHints();
+      if (s.free > 0) this.maxY = Math.max(this.maxY, s.cy);
+      if (s.cy > L.height - 350 && s.free > 0) {
+        this.state = 'finished';
+        this.stateT = 0;
+        this.finishBonus = s.free * 3;
+        this.events.push({ t: 'finish' });
+      }
+    } else {
+      this.updateBats(dt);
+      this.updateWebs(dt);
+    }
+    this.updateLanterns(dt);
+
+    s.compact();
+
+    if (this.state === 'play' && s.n === 0) {
+      if (!this.reviveUsed) {
+        this.state = 'reviving';
+        this.stateT = 0;
+      } else {
+        this.state = 'over';
+        this.stateT = 0;
+        this.events.push({ t: 'over' });
+      }
+    }
+    if (this.state === 'reviving' && this.stateT > 1.4) this.revive();
+
+    // camera
+    if (s.n > 0) {
+      const ty = s.cy + this.viewH * 0.12;
+      this.camY += (ty - this.camY) * damp(this.state === 'reviving' ? 1.5 : 3.2, dt);
+    }
+
+    if (this.shock) {
+      this.shock.t += dt;
+      if (this.shock.t > 1) this.shock = null;
+    }
+    this.updateParticles(dt);
+  }
+
+  private revive() {
+    const s = this.swarm;
+    this.reviveUsed = true;
+    const at = this.lastLantern ? { x: this.lastLantern.x, y: this.lastLantern.y - 30 } : { x: 0, y: Math.max(this.maxY - 200, 260) };
+    s.spawn(at.x, at.y, 70, 160);
+    s.cx = at.x;
+    s.cy = at.y;
+    s.tx = at.x;
+    s.ty = at.y + 40;
+    this.shadowY = Math.min(this.shadowY, at.y - 900);
+    this.bats.length = 0;
+    this.warns.length = 0;
+    this.blask = Math.max(this.blask, 50);
+    this.state = 'play';
+    this.stateT = 0;
+    for (let k = 0; k < 50; k++) {
+      const a = Math.random() * TAU, v = 60 + Math.random() * 200;
+      this.particles.push({ x: at.x, y: at.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 0, max: 1 + Math.random(), size: 4, r: 0.7, g: 1, b: 0.4, kind: 3, grav: 0, drag: 1.5 });
+    }
+    this.events.push({ t: 'revive' });
+  }
+
+  private updateShadow(dt: number) {
+    const s = this.swarm;
+    const d = this.progress;
+    let speed = 36 + 22 * d;
+    const gap = s.cy - this.shadowY;
+    if (gap > 1250) speed += (gap - 1250) * 1.2;
+    if (this.time < 4) speed = 0;
+    this.shadowY += speed * dt;
+    const kill = this.shadowY + 12;
+    const p = 1 - Math.exp(-2.8 * dt);
+    let n = 0;
+    for (let i = 0; i < s.n; i++) {
+      if (s.state[i] === 2) continue;
+      if (s.y[i] < kill && Math.random() < p) {
+        s.kill(i);
+        this.emit(s.x[i], s.y[i], 0.7, 0.3, 1, 0, 14, 0.6, 1, 30);
+        n++;
+      }
+    }
+    if (n) {
+      this.lost += n;
+      this.shadowAcc += n;
+    }
+    if (this.shadowAcc > 0 && this.biteSoundCd <= 0) {
+      this.events.push({ t: 'shadowLoss', n: this.shadowAcc });
+      this.shadowAcc = 0;
+      this.biteSoundCd = 0.25;
+    }
+    if (gap < 420 && !this.dynHints.has('shadow') && this.time > 6) {
+      this.dynHints.add('shadow');
+      this.events.push({ t: 'hint', id: 'shadow' });
+    }
+  }
+
+  private updateWebs(dt: number) {
+    const s = this.swarm;
+    const webs = this.level.webs;
+    for (let w = 0; w < webs.length; w++) {
+      const web = webs[w];
+      web.shake = Math.max(0, web.shake - dt * 3);
+      if (web.burn > 0) web.burn = Math.max(0, web.burn - dt * 1.2);
+      if (web.broken || Math.abs(web.y - s.cy) > 700) continue;
+      const r2 = (web.r * 0.9) ** 2;
+      for (let i = 0; i < s.n; i++) {
+        if (s.state[i] !== FREE) continue;
+        const dx = s.x[i] - web.x, dy = s.y[i] - web.y;
+        const inside = dx * dx + dy * dy < r2;
+        if (inside && s.inWeb[i] !== w) {
+          s.inWeb[i] = w;
+          if (web.caught < web.cap && Math.random() < 0.5) {
+            s.state[i] = STUCK;
+            s.web[i] = w;
+            s.timer[i] = 0;
+            s.vx[i] = 0;
+            s.vy[i] = 0;
+            web.caught++;
+            web.shake = 1;
+            if (this.caughtCd <= 0) {
+              this.events.push({ t: 'caught' });
+              this.caughtCd = 0.3;
+            }
+            if (!this.dynHints.has('flash')) {
+              this.dynHints.add('flash');
+              this.events.push({ t: 'hint', id: 'flash' });
+            }
+          }
+        } else if (!inside && s.inWeb[i] === w) s.inWeb[i] = -1;
+      }
+    }
+    for (let i = 0; i < s.n; i++) {
+      if (s.state[i] === STUCK && s.timer[i] > 5) {
+        s.kill(i);
+        this.lost++;
+        this.emit(s.x[i], s.y[i], 1, 0.5, 0.2, 0, 10, 0.8, 1, 20);
+      }
+    }
+  }
+
+  private updateBats(dt: number) {
+    const s = this.swarm;
+    const L = this.level;
+    const d = this.progress;
+    if (this.state === 'play') {
+      for (const z of L.batZones) {
+        if (s.cy < z.y0 || s.cy > z.y1) continue;
+        z.timer -= dt;
+        if (z.timer <= 0) {
+          z.timer = z.interval * (0.8 + Math.random() * 0.4);
+          const side = Math.random() < 0.5 ? -1 : 1;
+          const y = clamp(s.cy + (Math.random() * 340 - 80), this.camY - this.viewH / 2 + 100, this.camY + this.viewH / 2 - 100);
+          this.warns.push({ side, y, t: 0, speed: 300 + d * 90 });
+          this.events.push({ t: 'batWarn', side });
+        }
+      }
+    }
+    for (let k = this.warns.length - 1; k >= 0; k--) {
+      const w = this.warns[k];
+      w.t += dt;
+      if (w.t >= 1.1) {
+        this.warns.splice(k, 1);
+        const x = w.side * (this.viewW / 2 + 60);
+        // aim where the swarm will be
+        const px = s.cx + s.vcx * 0.5, py = s.cy + s.vcy * 0.5;
+        const dx = px - x, dy = py - w.y;
+        const l = Math.hypot(dx, dy) || 1;
+        this.bats.push({ x, y: w.y, vx: (dx / l) * w.speed, vy: (dy / l) * w.speed, t: 0, flee: 0, bites: 0, phase: Math.random() * TAU });
+      }
+    }
+    let bitten = 0;
+    for (let k = this.bats.length - 1; k >= 0; k--) {
+      const b = this.bats[k];
+      b.t += dt;
+      if (b.flee > 0) {
+        const dx = b.x - s.cx, dy = b.y - s.cy;
+        const l = Math.hypot(dx, dy) || 1;
+        b.vx += ((dx / l) * 520 - b.vx) * dt * 3;
+        b.vy += ((dy / l) * 520 + 200 - b.vy) * dt * 3;
+      }
+      const sp = Math.hypot(b.vx, b.vy) || 1;
+      const wob = Math.cos(b.t * 5.5 + b.phase) * 70;
+      b.x += b.vx * dt + (-b.vy / sp) * wob * dt;
+      b.y += b.vy * dt + (b.vx / sp) * wob * dt;
+      if (b.flee <= 0 && b.bites < BAT_BITES && this.state === 'play') {
+        for (let i = 0; i < s.n && b.bites < BAT_BITES; i++) {
+          if (s.state[i] !== FREE) continue;
+          const dx = s.x[i] - b.x, dy = s.y[i] - b.y;
+          if (dx * dx + dy * dy < 26 * 26) {
+            s.kill(i);
+            b.bites++;
+            bitten++;
+            this.emit(s.x[i], s.y[i], 1, 0.9, 0.4, 0, 8, 0.5, 1, 0);
+          }
+        }
+      }
+      const out = Math.abs(b.x) > this.viewW / 2 + 300 || Math.abs(b.y - this.camY) > this.viewH;
+      if (b.t > 1 && out) this.bats.splice(k, 1);
+    }
+    if (bitten) {
+      this.lost += bitten;
+      this.events.push({ t: 'bite', n: bitten });
+    }
+  }
+
+  private updatePickups(_dt: number) {
+    const s = this.swarm;
+    const L = this.level;
+    if (s.free === 0) return;
+    const mercy = s.free < 80 ? 2 : s.free < 150 ? 1.4 : 1;
+    for (const lv of L.larvae) {
+      if (lv.awake) continue;
+      if (Math.abs(lv.y - s.cy) > 400) continue;
+      const d = Math.hypot(lv.x - s.cx, lv.y - s.cy);
+      if (d < s.radius + 45) {
+        lv.awake = true;
+        const n = Math.min(Math.round(lv.n * mercy), MAX_ALIVE - s.n);
+        if (n > 0) s.spawn(lv.x, lv.y, n, 140);
+        this.larvaeWoken += n;
+        this.score += 5 * n;
+        for (let k = 0; k < 18; k++) {
+          const a = Math.random() * TAU, v = 40 + Math.random() * 120;
+          this.particles.push({ x: lv.x, y: lv.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v + 30, life: 0, max: 0.6 + Math.random() * 0.6, size: 3 + Math.random() * 3, r: 0.7, g: 1, b: 0.45, kind: 3, grav: -20, drag: 2 });
+        }
+        this.events.push({ t: 'larva', x: lv.x, y: lv.y, n });
+      }
+    }
+    for (const l of L.lanterns) {
+      if (l.lit || Math.abs(l.y - s.cy) > 350) continue;
+      let c = 0;
+      for (let i = 0; i < s.n; i++) {
+        if (s.state[i] !== FREE) continue;
+        const dx = s.x[i] - l.x, dy = s.y[i] - l.y;
+        if (dx * dx + dy * dy < 95 * 95) c++;
+      }
+      const need = Math.min(20, Math.max(5, Math.floor(s.free * 0.4)));
+      if (c >= need) l.charge += _dt / 0.9;
+      else l.charge = Math.max(0, l.charge - _dt * 0.6);
+      if (l.charge >= 1) this.lightLantern(l);
+    }
+  }
+
+  private lightLantern(l: Lantern) {
+    l.lit = true;
+    l.charge = 1;
+    this.lanternsLit++;
+    this.lastLantern = l;
+    this.blask = Math.min(100, this.blask + 40);
+    this.score += 100;
+    for (let k = 0; k < 40; k++) {
+      const a = Math.random() * TAU, v = 60 + Math.random() * 180;
+      this.particles.push({ x: l.x, y: l.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 0, max: 0.8 + Math.random() * 0.8, size: 3 + Math.random() * 4, r: 1, g: 0.6, b: 0.2, kind: 3, grav: -30, drag: 2 });
+    }
+    this.events.push({ t: 'lantern', x: l.x, y: l.y, k: this.lanternsLit });
+  }
+
+  private updateLanterns(dt: number) {
+    const s = this.swarm;
+    for (const l of this.level.lanterns) {
+      l.t += dt;
+      // pendulum pushed by the passing swarm
+      const d = Math.hypot(l.x - s.cx, l.y - s.cy);
+      const push = d < 160 ? s.vcx * 0.004 * (1 - d / 160) : 0;
+      l.av += (-l.ang * 7 - l.av * 0.8 + push + Math.sin(this.time * 0.9 + l.ax) * 0.15) * dt;
+      l.ang += l.av * dt;
+      l.x = l.ax + Math.sin(l.ang) * l.len;
+      l.y = l.ay - Math.cos(l.ang) * l.len;
+    }
+  }
+
+  private updateHints() {
+    const h = this.level.hints;
+    while (this.hintIdx < h.length && this.swarm.cy > h[this.hintIdx].y) {
+      this.events.push({ t: 'hint', id: h[this.hintIdx].id });
+      this.hintIdx++;
+    }
+    const s = this.swarm;
+    if (!this.dynHints.has('sync') && this.time > 25 && s.order > 0.7) {
+      this.dynHints.add('sync');
+      this.events.push({ t: 'hint', id: 'sync' });
+    }
+  }
+
+  emit(x: number, y: number, r: number, g: number, b: number, kind: number, speed: number, life: number, size: number, grav: number) {
+    if (this.particles.length > 700) this.particles.shift();
+    const a = Math.random() * TAU, v = Math.random() * speed;
+    this.particles.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 0, max: life * (0.6 + Math.random() * 0.8), size: size * (2 + Math.random() * 2), r, g, b, kind, grav, drag: 1.5 });
+  }
+
+  private updateParticles(dt: number) {
+    const ps = this.particles;
+    for (let k = ps.length - 1; k >= 0; k--) {
+      const p = ps[k];
+      p.life += dt;
+      if (p.life >= p.max) {
+        ps[k] = ps[ps.length - 1];
+        ps.pop();
+        continue;
+      }
+      const dr = Math.exp(-p.drag * dt);
+      p.vx *= dr;
+      p.vy = p.vy * dr - p.grav * dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+    }
+  }
+}
