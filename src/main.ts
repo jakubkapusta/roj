@@ -47,10 +47,6 @@ const ui = new Ui({
 ui.touch = matchMedia('(pointer: coarse)').matches;
 
 const input = new Input(canvas, {
-  unitsPerPx: () => {
-    const cssW = canvas.clientWidth || window.innerWidth;
-    return renderer.viewW / cssW;
-  },
   toWorld: (px, py) => {
     const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
     return [game.camX + (px / cssW - 0.5) * renderer.viewW, game.camY - (py / cssH - 0.5) * renderer.viewH];

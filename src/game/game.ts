@@ -2,7 +2,7 @@
 
 import { clamp, damp, TAU } from '../core/math';
 import { hashString, makeRng } from '../core/rng';
-import { Level, type Lantern } from './level';
+import { Level, HALF_W, type Lantern } from './level';
 import { Swarm, FREE, STUCK } from './swarm';
 import { BIOMES, type BiomeDef } from './biomes';
 import * as HZ from './hazards';
@@ -454,7 +454,8 @@ export class Game {
       w.t += dt;
       if (w.t >= 1.1) {
         this.warns.splice(k, 1);
-        const x = w.side * (this.viewW / 2 + 60);
+        // bats come out from behind the side trunks
+        const x = w.side * (HALF_W + 40);
         // aim where the swarm will be
         const px = s.cx + s.vcx * 0.5, py = s.cy + s.vcy * 0.5;
         const dx = px - x, dy = py - w.y;

@@ -175,7 +175,7 @@ export class Renderer {
     for (const side of [-1, 1] as const) {
       const pts: { x: number; y: number; thick: number }[] = [];
       for (let y = y0; y <= y1; y += 16) {
-        const th = style === 'reeds' ? 26 : 140 + 60 * Math.sin(y * 0.004 + side) + 20 * Math.sin(y * 0.021);
+        const th = 185 + 14 * Math.sin(y * 0.0017 + side * 2) + 5 * Math.sin(y * 0.011);
         pts.push({ x: L.wallAt(side, y), y, thick: th });
       }
       if (style === 'clouds') {
@@ -188,7 +188,6 @@ export class Renderer {
         }
         continue;
       }
-      mb.wall(pts, side, 1);
       if (style === 'reeds') {
         for (let y = y0 + r.range(0, 30); y < y1; y += r.range(22, 50)) {
           const x = L.wallAt(side, y) + side * r.range(-4, 60);
@@ -197,6 +196,28 @@ export class Renderer {
           mb.blade(x, y + h * r.range(0.2, 0.6), Math.PI / 2 + side * r.range(0.3, 0.9), r.range(60, 130), 3, side * r.range(0.3, 0.9), 1, 1);
         }
         continue;
+      }
+      mb.wall(pts, side, 1);
+      // bark: long vertical ridges on the trunk, lit when the swarm passes
+      for (let k = 0; k < 5; k++) {
+        const off = 22 + k * 32 + r.range(-6, 6);
+        let y = y0 + r.range(0, 120);
+        while (y < y1) {
+          const len = r.range(120, 420);
+          const ridge: { x: number; y: number; r: number }[] = [];
+          for (let yy = y; yy <= Math.min(y + len, y1); yy += 30) {
+            const q = (yy - y) / len;
+            ridge.push({ x: L.wallAt(side, yy) + side * (off + Math.sin(yy * 0.01 + k) * 4), y: yy, r: 2.6 * Math.sin(Math.PI * Math.min(1, q)) + 0.4 });
+          }
+          if (ridge.length > 1) mb.tube(ridge, 0, 1.35);
+          y += len + r.range(40, 160);
+        }
+      }
+      // branch stubs on the outer side of the trunk so it reads as a tree from both sides
+      for (let y = y0 + r.range(0, 300); y < y1; y += r.range(300, 600)) {
+        const x = L.wallAt(side, y) + side * 180;
+        const len = r.range(60, 160);
+        mb.tube([{ x: x - side * 10, y, r: 12 }, { x: x + side * len * 0.4, y: y + len * 0.3, r: 7 }, { x: x + side * len * 0.8, y: y + len * 0.6, r: 2 }], 0.2, 1);
       }
       for (let y = y0 + r.range(0, 30); y < y1; y += r.range(18, 46)) {
         const x = L.wallAt(side, y) - side * 2;
@@ -597,7 +618,8 @@ export class Renderer {
       this.spr(SS, b.x, b.y + 11, 14, 0, 0.2 * e, 0.03 * e, 0.03 * e, 1);
     }
     for (const w of g.warns) {
-      const x = w.side * (g.viewW / 2 - 28) + g.camX;
+      // echo rings on the trunk the bat is about to leave
+      const x = g.level.wallAt(w.side as -1 | 1, w.y) + w.side * 6;
       for (let k = 0; k < 3; k++) {
         const ph = (w.t * 2.2 + k / 3) % 1;
         const a = (1 - ph) * Math.min(1, w.t * 4);

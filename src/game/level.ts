@@ -82,11 +82,18 @@ export class Level {
     this.wallR = new Float32Array(nw);
     for (let i = 0; i < nw; i++) {
       const y = i * this.WS - 1000;
-      this.wallL[i] = -HALF_W + 40 + (fbm1(y * 0.0035, seed) * 26 + fbm1(y * 0.0011, seed + 5) * 34 + fbm1(y * 0.02, seed + 9) * 7) * amp;
-      this.wallR[i] = HALF_W - 40 - (fbm1(y * 0.0035, seed + 77) * 26 + fbm1(y * 0.0011, seed + 55) * 34 + fbm1(y * 0.02, seed + 19) * 7) * amp;
+      if (biome.wallStyle === 'bark') {
+        // tree trunks: nearly straight, gently leaning; burls add the variety
+        this.wallL[i] = -HALF_W + 46 + fbm1(y * 0.0012, seed + 5) * 22 + fbm1(y * 0.005, seed) * 5;
+        this.wallR[i] = HALF_W - 46 - fbm1(y * 0.0012, seed + 55) * 22 - fbm1(y * 0.005, seed + 77) * 5;
+      } else {
+        this.wallL[i] = -HALF_W + 40 + (fbm1(y * 0.0035, seed) * 26 + fbm1(y * 0.0011, seed + 5) * 34 + fbm1(y * 0.02, seed + 9) * 7) * amp;
+        this.wallR[i] = HALF_W - 40 - (fbm1(y * 0.0035, seed + 77) * 26 + fbm1(y * 0.0011, seed + 55) * 34 + fbm1(y * 0.02, seed + 19) * 7) * amp;
+      }
     }
     for (let c = 0; c * CHUNK < height + 2000; c++) this.shapes.push([]);
     GENERATORS[biome.id](this);
+    if (biome.wallStyle === 'bark') this.addBurls();
     this.cols = Math.ceil((HALF_W * 2) / CELL) + 1;
     this.rows = Math.ceil((height + 1000) / CELL) + 1;
     this.sdf = new Float32Array(this.cols * this.rows);
@@ -109,6 +116,25 @@ export class Level {
       const s = t * t * (3 - 2 * t);
       this.wallL[i] -= amount * s;
       this.wallR[i] += amount * s;
+    }
+  }
+
+  /** Knots and burls on the trunks where no piece needs the space. */
+  private addBurls() {
+    const r = this.rng;
+    for (let y = r.range(600, 900); y < this.height - 400; y += r.range(380, 800)) {
+      const side: -1 | 1 = r.chance(0.5) ? -1 : 1;
+      const rad = r.range(26, 46);
+      const x = this.wallAt(side, y) + side * rad * 0.35;
+      const clear = this.caps.every((c) => Math.hypot(c.ax - x, c.ay - y) > 190 && Math.hypot(c.bx - x, c.by - y) > 190)
+        && this.circles.every((c) => Math.hypot(c.x - x, c.y - y) > 190)
+        && this.webs.every((w) => Math.hypot(w.x - x, w.y - y) > w.r + 120)
+        && this.frogs.every((f) => Math.abs(f.y - y) > 200);
+      if (!clear) continue;
+      this.add({ k: 'blob', x, y, r: rad, seed: r.int(0, 999), tone: 1.05, squash: r.range(1.2, 1.7) });
+      // a ring of bark around the knot
+      this.add({ k: 'blob', x: x - side * rad * 0.25, y, r: rad * 0.45, seed: r.int(0, 999), tone: 0.8, squash: 1.3 }, false);
+      if (r.chance(0.4)) this.mushroomCluster(x - side * rad * 0.5, y + rad * 1.1, -side, r.int(1, 2));
     }
   }
 

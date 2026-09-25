@@ -4,6 +4,7 @@
 import { clamp, TAU } from '../core/math';
 import { FREE } from './swarm';
 import type { Game } from './game';
+import { HALF_W } from './level';
 
 export type Dragonfly = {
   x: number; y: number; vx: number; vy: number; t: number;
@@ -314,7 +315,7 @@ export function updateRain(g: Game, dt: number) {
 // ------------------------------------------------------------ moths
 export function spawnMoth(g: Game) {
   const side = Math.random() < 0.5 ? -1 : 1;
-  g.moths.push({ x: side * (g.viewW / 2 + 30), y: g.camY + (Math.random() * 0.8 - 0.2) * g.viewH / 2, vx: -side * 120, vy: 0, t: 0, eaten: 0, phase: Math.random() * TAU, eatT: 0, leave: false });
+  g.moths.push({ x: side * (HALF_W + 30), y: g.camY + (Math.random() * 0.8 - 0.2) * g.viewH / 2, vx: -side * 120, vy: 0, t: 0, eaten: 0, phase: Math.random() * TAU, eatT: 0, leave: false });
 }
 
 export function updateMoths(g: Game, dt: number) {

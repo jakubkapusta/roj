@@ -14,7 +14,7 @@ export type UiHooks = {
 
 const HINTS: Record<string, [touch: string, mouse: string]> = {
   move: [
-    'Przytrzymaj palec w dowolnym miejscu i <b>przeciągnij</b> — rój poleci za ruchem',
+    'Przytrzymaj palec i <b>prowadź</b> — rój leci tuż nad palcem',
     '<b>Przytrzymaj</b> przycisk myszy — rój leci do kursora',
   ],
   shadow: ['Od dołu podnosi się <em>Cień</em>. Leć w górę — w nim świetliki gasną', 'Od dołu podnosi się <em>Cień</em>. Leć w górę — w nim świetliki gasną'],

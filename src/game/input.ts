@@ -1,10 +1,9 @@
-// Pointer control. Touch: relative drag (thumb anywhere, doesn't cover the swarm),
-// double tap or a second finger = flash. Mouse: hold to lead the swarm to the cursor,
+// Pointer control. The swarm target follows the pointer's *screen* position, re-projected
+// every frame (the camera keeps moving). Touch aims a little above the finger so the thumb
+// doesn't cover the swarm; double tap or a second finger = flash. Mouse: hold to lead,
 // double click = flash. Keyboard: space = flash, arrows/WASD nudge the target.
 
 export type InputHooks = {
-  /** css px -> world units per css px */
-  unitsPerPx: () => number;
   toWorld: (px: number, py: number) => [number, number];
   getTarget: () => [number, number];
   setTarget: (x: number, y: number) => void;
@@ -14,7 +13,8 @@ export type InputHooks = {
   enabled: () => boolean;
 };
 
-const GAIN = 1.35;
+/** css px the touch target sits above the finger */
+const TOUCH_LIFT = 46;
 
 export class Input {
   isTouch = false;
@@ -61,27 +61,27 @@ export class Input {
     }
     this.active.set(e.pointerId, { x: e.clientX, y: e.clientY, t: now, type: isTouch ? 'touch' : 'mouse' });
     this.h.setGuiding(true);
-    if (!isTouch) {
-      const [wx, wy] = this.h.toWorld(e.clientX, e.clientY);
-      this.h.setTarget(wx, wy);
-    }
+    this.aim();
   };
 
   private move = (e: PointerEvent) => {
     const p = this.active.get(e.pointerId);
     if (!p || !this.h.enabled()) return;
     e.preventDefault();
-    if (p.type === 'mouse') {
-      const [wx, wy] = this.h.toWorld(e.clientX, e.clientY);
-      this.h.setTarget(wx, wy);
-    } else if (p.type === 'touch') {
-      const k = this.h.unitsPerPx() * GAIN;
-      const [tx, ty] = this.h.getTarget();
-      this.h.setTarget(tx + (e.clientX - p.x) * k, ty - (e.clientY - p.y) * k);
-    }
     p.x = e.clientX;
     p.y = e.clientY;
+    this.aim();
   };
+
+  /** Point the swarm at the steering pointer (touch: slightly above the finger). */
+  private aim() {
+    for (const p of this.active.values()) {
+      if (p.type === 'extra') continue;
+      const [wx, wy] = this.h.toWorld(p.x, p.y - (p.type === 'touch' ? TOUCH_LIFT : 0));
+      this.h.setTarget(wx, wy);
+      return;
+    }
+  }
 
   private up = (e: PointerEvent) => {
     const p = this.active.get(e.pointerId);
@@ -103,6 +103,7 @@ export class Input {
   /** Keyboard nudging; call every frame. */
   update(dt: number) {
     if (!this.h.enabled()) return;
+    this.aim();
     let dx = 0, dy = 0;
     if (this.keys.has('ArrowLeft') || this.keys.has('KeyA')) dx -= 1;
     if (this.keys.has('ArrowRight') || this.keys.has('KeyD')) dx += 1;
