@@ -6,7 +6,8 @@ import '@fontsource/quicksand/600.css';
 import './style.css';
 
 import { Renderer } from './render/renderer';
-import { Game, newRun } from './game/game';
+import { Game, newRun, type Carry } from './game/game';
+import { dailySeed, loadMeta, loadRun, loadSky, mutationOffer, saveMeta, saveRun, saveSky, speciesUnlocked, today } from './game/meta';
 import { BIOMES } from './game/biomes';
 import { Input } from './game/input';
 import { Ui } from './ui/ui';
@@ -33,7 +34,11 @@ let endShown = false;
 const meta = loadMeta();
 
 const ui = new Ui({
-  start: () => startRun(),
+  start: (daily) => startRun(daily),
+  cont: () => continueRun(),
+  pickSpecies: (id) => { meta.species = id; saveMeta(meta); showMenu(); },
+  pickNight: (n) => { meta.nightSel = Math.max(1, Math.min(meta.night, n)); saveMeta(meta); showMenu(); },
+  sky: () => ui.showSky(loadSky(), showMenu),
   pause: () => pause(),
   resume: () => resume(),
   menu: () => toMenu(),
@@ -71,11 +76,37 @@ function startBiomeFromHash() {
   return m ? Math.max(0, Math.min(BIOMES.length - 1, Number(m[1]) - 1)) : 0;
 }
 
-function startRun() {
+function showMenu() {
+  ui.showMenu({ meta, save: loadRun(), sky: loadSky().length });
+}
+
+function startRun(daily = false) {
   meta.runs++;
-  saveMeta();
-  enterBiome(new Game(newRun((Date.now() ^ (Math.random() * 1e9)) >>> 0, startBiomeFromHash())));
+  saveMeta(meta);
+  const seed = daily ? dailySeed() : (Date.now() ^ (Math.random() * 1e9)) >>> 0;
+  const species = daily || !speciesUnlocked(meta, meta.species) ? 'zielone' : meta.species;
+  const night = daily ? 1 : Math.min(meta.nightSel, meta.night);
+  enterBiome(new Game(newRun(seed, daily ? 0 : startBiomeFromHash(), { species, night, daily })));
   setTimeout(() => ui.hint('move'), 800);
+}
+
+function continueRun() {
+  const sv = loadRun();
+  if (!sv) return showMenu();
+  if (sv.pending) return offerMutation(null, sv.carry);
+  const g = new Game(sv.carry);
+  if (sv.lantern >= 0) g.restoreAt(sv);
+  enterBiome(g);
+}
+
+/** Between biomes (or when resuming there): pick a mutation, then fly on. */
+function offerMutation(g: Game | null, next: Carry) {
+  mode = 'end';
+  saveRun({ v: 1, carry: next, lantern: -1, pending: true });
+  ui.showBiomeDone(g, next, mutationOffer(next.seed, next.biome, next.mutations), (id) => {
+    if (id) next.mutations.push(id);
+    enterBiome(new Game(next));
+  });
 }
 
 function enterBiome(g: Game) {
@@ -90,13 +121,14 @@ function enterBiome(g: Game) {
   ui.hideScreens();
   ui.setBiome(g.biome.name, g.carry.biome + 1, BIOMES.length);
   sound.setBiome(g.biome.id);
+  saveRun(g.snapshot());
 }
 
 function pause() {
   if (mode !== 'play') return;
   mode = 'pause';
   input.reset();
-  ui.showPause();
+  ui.showPause(game.carry);
   sound.suspend(true);
 }
 function resume() {
@@ -111,7 +143,7 @@ function toMenu() {
   game = makeMenuGame();
   fade = 1;
   fadeTarget = 0;
-  ui.showMenu(meta.best, meta.runs);
+  showMenu();
 }
 
 document.addEventListener('visibilitychange', () => {
@@ -123,17 +155,31 @@ function handleEvents() {
   for (const e of game.events) {
     switch (e.t) {
       case 'larva': sound.larva(e.n); break;
-      case 'lantern': sound.lantern(e.k); ui.pop(e.star ? 'Gwiazda zapalona' : 'Lampion zapalony'); break;
+      case 'lantern':
+        sound.lantern(e.k);
+        ui.pop(e.star ? 'Gwiazda zapalona' : 'Lampion zapalony');
+        saveRun(game.snapshot());
+        break;
       case 'flash':
         sound.flash(e.perfect);
-        if (e.perfect) ui.pop('Idealnie!');
+        if (e.perfect) {
+          ui.pop('Idealnie!');
+          meta.perfects++;
+          saveMeta(meta);
+        }
         break;
       case 'noBlask': sound.noBlask(); ui.noBlask(); break;
       case 'batWarn': sound.batWarn(e.side); break;
       case 'bite': sound.loss(e.n); ui.hurt(); vibrate(25); break;
       case 'shadowLoss': sound.loss(e.n); ui.hurt(); vibrate(15); break;
       case 'caught': sound.caught(); break;
-      case 'revive': sound.revive(); ui.pop('Druga szansa'); break;
+      case 'revive': {
+        sound.revive();
+        ui.pop('Druga szansa');
+        const sv = loadRun();
+        if (sv) { sv.reviveUsed = true; saveRun(sv); }
+        break;
+      }
       case 'finish': sound.finish(); break;
       case 'over': sound.over(); break;
       case 'hint': ui.hint(e.id); break;
@@ -164,18 +210,34 @@ function checkEnd() {
   endShown = true;
   mode = 'end';
   input.reset();
+  const unlocks: string[] = [];
+  const had = { blue: speciesUnlocked(meta, 'blekitne'), amber: speciesUnlocked(meta, 'bursztynowe'), purple: speciesUnlocked(meta, 'purpurowe') };
+  if (won && game.biome.id === 'staw') meta.staw = true;
   if (won && !game.isLast) {
-    const g = game;
-    ui.showBiomeDone(g, BIOMES[g.carry.biome + 1], () => enterBiome(new Game(g.next())));
+    saveMeta(meta);
+    offerMutation(game, game.next());
     return;
   }
+  saveRun(null);
   if (won && game.constellation) saveConstellation(game);
   const total = game.total;
+  const daily = game.carry.daily;
   const isBest = total > meta.best;
   if (isBest) meta.best = total;
-  if (won) meta.wins++;
-  saveMeta();
-  ui.showEnd(game, won, meta.best, isBest, () => startRun());
+  if (won) {
+    meta.wins++;
+    if (!daily && game.carry.night === meta.night && meta.night < 10) {
+      meta.night++;
+      meta.nightSel = meta.night;
+      unlocks.push(`Odblokowana Noc ${meta.night}`);
+    }
+  }
+  if (daily) meta.daily = { date: today(), best: meta.daily.date === today() ? Math.max(meta.daily.best, total) : total };
+  if (!had.blue && speciesUnlocked(meta, 'blekitne')) unlocks.push('Nowy gatunek: Błękitne świetliki');
+  if (!had.amber && speciesUnlocked(meta, 'bursztynowe')) unlocks.push('Nowy gatunek: Bursztynowe świetliki');
+  if (!had.purple && speciesUnlocked(meta, 'purpurowe')) unlocks.push('Nowy gatunek: Purpurowe świetliki');
+  saveMeta(meta);
+  ui.showEnd(game, won, meta.best, isBest, () => startRun(daily), unlocks);
 }
 
 // ------------------------------------------------------------ adaptive quality
@@ -219,30 +281,23 @@ function frame(now: number) {
   requestAnimationFrame(frame);
 }
 
-ui.showMenu(meta.best, meta.runs);
+showMenu();
 requestAnimationFrame(frame);
+
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+}
 
 // ------------------------------------------------------------ persistence
 function saveConstellation(g: Game) {
   const c = g.constellation!;
-  try {
-    const sky = JSON.parse(localStorage.getItem('roj.sky.v1') || '[]');
-    const cy = c.stars.reduce((a, s) => a + s[1], 0) / c.stars.length;
-    sky.push({ name: c.name, stars: c.stars.map(([x, y]) => [Math.round(x), Math.round(y - cy)]), links: c.links, flies: g.swarm.n, score: g.total, date: new Date().toISOString().slice(0, 10) });
-    localStorage.setItem('roj.sky.v1', JSON.stringify(sky));
-  } catch { /* ignore */ }
-}
-
-function loadMeta() {
-  try {
-    const m = JSON.parse(localStorage.getItem('roj.meta.v1') || '{}');
-    return { best: m.best | 0, runs: m.runs | 0, wins: m.wins | 0 };
-  } catch {
-    return { best: 0, runs: 0, wins: 0 };
-  }
-}
-function saveMeta() {
-  try { localStorage.setItem('roj.meta.v1', JSON.stringify(meta)); } catch { /* ignore */ }
+  const cy = c.stars.reduce((a, s) => a + s[1], 0) / c.stars.length;
+  const sky = loadSky();
+  sky.push({
+    name: c.name, stars: c.stars.map(([x, y]) => [Math.round(x), Math.round(y - cy)] as [number, number]), links: c.links,
+    flies: g.swarm.n, score: g.total, date: today(), species: g.carry.species, night: g.carry.night,
+  });
+  saveSky(sky);
 }
 
 if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__roj = { get game() { return game; }, renderer };

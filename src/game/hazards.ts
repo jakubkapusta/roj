@@ -38,6 +38,7 @@ function killAlong(g: Game, ax: number, ay: number, bx: number, by: number, rad:
     t = clamp(t, 0, 1);
     const qx = ax + dx * t - s.x[i], qy = ay + dy * t - s.y[i];
     if (qx * qx + qy * qy < r2) {
+      if (Math.random() < g.mods.dodge) continue;
       killFly(g, i, col[0], col[1], col[2]);
       n++;
     }
@@ -78,7 +79,7 @@ export function updateFrogs(g: Game, dt: number) {
         break;
       }
       case 1:
-        if (f.t > 0.85) { f.state = 2; f.t = 0; g.events.push({ t: 'frogStrike' }); }
+        if (f.t > 0.85 * g.mods.warn) { f.state = 2; f.t = 0; g.events.push({ t: 'frogStrike' }); }
         break;
       case 2: {
         const k = Math.min(1, f.t / 0.1);
@@ -90,7 +91,7 @@ export function updateFrogs(g: Game, dt: number) {
         break;
       }
       case 3:
-        if (f.t > 0.25) { f.state = 0; f.t = 0; f.cool = 2.4 + Math.random() * 1.2; f.eaten = 0; }
+        if (f.t > 0.25) { f.state = 0; f.t = 0; f.cool = (2.4 + Math.random() * 1.2) * g.mods.hazard; f.eaten = 0; }
         break;
       case 4:
         if (f.t > 3) { f.state = 0; f.t = 0; f.cool = 1; }
@@ -135,7 +136,7 @@ export function updateDragonflies(g: Game, dt: number) {
       if (d.state === 3 && Math.abs(d.y - g.camY) > g.viewH) g.dragonflies.splice(k, 1);
     } else if (d.state === 1) {
       d.x += Math.sin(d.t * 40) * 0.6;
-      if (d.t > 0.55) {
+      if (d.t > 0.55 * g.mods.warn) {
         d.state = 2;
         d.t = 0;
         const dx = d.tx - d.x, dy = d.ty - d.y, l = Math.hypot(dx, dy) || 1;
@@ -184,7 +185,7 @@ export function updateOwls(g: Game, dt: number) {
         g.events.push({ t: 'owl' });
       }
     } else if (o.state === 1) {
-      if (o.t > 1.35) {
+      if (o.t > 1.35 * g.mods.warn) {
         o.state = 2;
         o.t = 0;
         // bezier through the predicted swarm position, exit on the other side

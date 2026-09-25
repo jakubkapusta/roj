@@ -10,7 +10,7 @@ import { LAYERS, STRIP, buildStrip } from './backdrop';
 import { CHUNK, type Level, type Shape } from '../game/level';
 import { makeRng } from '../core/rng';
 import { clamp, smoothstep } from '../core/math';
-import { SWARM_RGB, type Game } from '../game/game';
+import type { Game } from '../game/game';
 import { frogMouth } from '../game/hazards';
 import { STUCK } from '../game/swarm';
 
@@ -323,7 +323,7 @@ export class Renderer {
     const endK = B.id === 'niebo' ? 0 : smoothstep(L.height - 2600, L.height - 300, cy);
     const flash = g.lightning > 0 ? g.lightning * (0.6 + 0.4 * Math.sin(t * 60)) : 0;
     this.pBg.use().tex('u_lit', 0, this.lit.tex).f4('u_view', cx, cy, vz, vw).f1('u_time', t)
-      .v3('u_bot', PAL.bot).v3('u_top', mixv(PAL.top, [0.03, 0.06, 0.12], endK)).v3('u_swarm', SWARM_RGB).f1('u_fogAmt', PAL.fogAmt)
+      .v3('u_bot', PAL.bot).v3('u_top', mixv(PAL.top, [0.03, 0.06, 0.12], endK)).v3('u_swarm', g.rgb).f1('u_fogAmt', PAL.fogAmt)
       .f2('u_moon', 0.8, Math.max(B.moon, endK)).f1('u_stars', Math.max(B.stars, endK * 0.4)).f1('u_aurora', B.aurora)
       .f1('u_beams', B.id === 'korony' ? 1 : endK * 0.5).f1('u_flash', flash);
     this.fullscreen();
@@ -379,7 +379,7 @@ export class Renderer {
     this.drawSprites(this.sceneSpr, cx, cy, vz, vw);
 
     // volumetric haze
-    this.pFog.use().tex('u_lit', 0, this.lit.tex).f4('u_view', cx, cy, vz, vw).f1('u_time', t).v3('u_swarm', SWARM_RGB).f1('u_fogAmt', PAL.fogAmt);
+    this.pFog.use().tex('u_lit', 0, this.lit.tex).f4('u_view', cx, cy, vz, vw).f1('u_time', t).v3('u_swarm', g.rgb).f1('u_fogAmt', PAL.fogAmt);
     this.fullscreen();
 
     // the Shadow
@@ -453,12 +453,12 @@ export class Renderer {
     SS.reset();
     this.dyn.reset();
     this.ranges.length = 0;
-    const [sr, sg, sb] = SWARM_RGB;
+    const [sr, sg, sb] = g.rgb;
     const inView = (y: number, m = 80) => y > yMin - m && y < yMax + m;
 
     // --- fireflies
     const n = s.n;
-    const lightSize = 75 + 2.4 * Math.sqrt(n);
+    const lightSize = (75 + 2.4 * Math.sqrt(n)) * g.mods.light;
     const step = n > 420 ? 2 : 1;
     const li = (0.55 / Math.sqrt(Math.max(n, 30))) * step;
     for (let i = 0; i < n; i++) {
@@ -471,8 +471,8 @@ export class Renderer {
         continue;
       }
       if (i % step === 0) this.spr(LS, x, y, lightSize, 0, sr * b * li, sg * b * li, sb * b * li, 1);
-      this.spr(SS, x, y, 9, 0, 0.5 * b, 0.95 * b, 0.22 * b, 0.16);
-      this.spr(SS, x, y, 2.5, 1, 2.3 * b, 2.6 * b, 1.3 * b, 1);
+      this.spr(SS, x, y, 9, 0, sr * 0.85 * b, sg * 0.95 * b, sb * 0.8 * b, 0.16);
+      this.spr(SS, x, y, 2.5, 1, (1.3 + sr) * b, (1.3 + sg * 1.3) * b, (1.0 + sb) * b, 1);
     }
     // flash light burst
     if (g.shock) {

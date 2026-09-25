@@ -6,6 +6,7 @@ import { Level, HALF_W, type Lantern } from './level';
 import { Swarm, FREE, STUCK } from './swarm';
 import { BIOMES, type BiomeDef } from './biomes';
 import * as HZ from './hazards';
+import { computeMods, SPECIES, type Mods, type RunSave } from './meta';
 
 /** What a run carries from one biome to the next. */
 export type Carry = {
@@ -20,10 +21,19 @@ export type Carry = {
   heightBase: number;
   reviveUsed: boolean;
   lost: number;
+  species: string;
+  night: number;
+  mutations: string[];
+  daily: boolean;
 };
 
-export function newRun(seed: number, biome = 0): Carry {
-  return { seed, biome, flies: 200, blask: 60, score: 0, lanterns: 0, larvae: 0, perfects: 0, heightBase: 0, reviveUsed: false, lost: 0 };
+export function newRun(seed: number, biome = 0, opts: { species?: string; night?: number; daily?: boolean } = {}): Carry {
+  const species = opts.species ?? 'zielone', night = opts.night ?? 1;
+  const m = computeMods(species, night, []);
+  return {
+    seed, biome, flies: m.startFlies, blask: m.startBlask, score: 0, lanterns: 0, larvae: 0, perfects: 0, heightBase: 0,
+    reviveUsed: !m.revive, lost: 0, species, night, mutations: [], daily: !!opts.daily,
+  };
 }
 
 export type Constellation = { name: string; stars: [number, number][]; links: [number, number][]; t: number };
@@ -67,17 +77,16 @@ export type BatWarn = { side: number; y: number; t: number; speed: number };
 
 export type Shock = { x: number; y: number; t: number; R: number; perfect: boolean };
 
-export const SWARM_RGB: [number, number, number] = [0.62, 1.0, 0.28];
 
 const MAX_ALIVE = 800;
-const FLASH_COST = 35;
-const PERFECT_COST = 10;
 const BAT_BITES = 16;
 
 export class Game {
   level: Level;
   biome: BiomeDef;
   carry: Carry;
+  mods: Mods;
+  rgb: [number, number, number];
   swarm = new Swarm();
   time = 0;
   state: 'play' | 'reviving' | 'finished' | 'over' = 'play';
@@ -128,6 +137,8 @@ export class Game {
   constructor(carry: Carry) {
     this.carry = carry;
     this.biome = BIOMES[carry.biome];
+    this.mods = computeMods(carry.species, carry.night, carry.mutations);
+    this.rgb = (SPECIES.find((x) => x.id === carry.species) ?? SPECIES[0]).rgb;
     this.level = new Level(hashString(`${carry.seed}:${carry.biome}`), this.biome);
     this.blask = carry.blask;
     this.score = carry.score;
@@ -135,7 +146,11 @@ export class Game {
     this.larvaeWoken = carry.larvae;
     this.perfects = carry.perfects;
     this.heightBase = carry.heightBase;
-    this.reviveUsed = carry.reviveUsed;
+    this.reviveUsed = carry.reviveUsed || !this.mods.revive;
+    this.swarm.speedMul = this.mods.speed;
+    this.swarm.couplingMul = this.mods.coupling;
+    // fewer sleeping larvae on harder nights (deterministic per larva)
+    if (this.mods.larvaKeep < 1) this.level.larvae = this.level.larvae.filter((_, i) => ((i * 2654435761) >>> 0) / 4294967296 < this.mods.larvaKeep || i < 2);
     this.lost = carry.lost;
     this.swarm.spawn(0, 260, carry.flies, 120);
     this.swarm.tx = 0;
@@ -152,11 +167,49 @@ export class Game {
     return Math.floor(this.maxY / 10);
   }
   get total() {
-    return this.score + this.heightBase + this.heightScore + this.finishBonus;
+    return Math.round((this.score + this.heightBase + this.heightScore + this.finishBonus) * this.mods.score);
   }
   get isLast() {
     return this.carry.biome >= BIOMES.length - 1;
   }
+  /** Save point: the last lit lantern with the counters as they are now. */
+  snapshot(): RunSave {
+    const idx = this.lastLantern ? this.level.lanterns.indexOf(this.lastLantern) : -1;
+    if (idx < 0) return { v: 1, carry: this.carry, lantern: -1 };
+    return {
+      v: 1, carry: this.carry, lantern: idx, flies: Math.max(this.swarm.n, 40), blask: this.blask, score: this.score,
+      lanterns: this.lanternsLit, larvae: this.larvaeWoken, perfects: this.perfects, lost: this.lost, reviveUsed: this.reviveUsed,
+    };
+  }
+
+  /** Resume a saved run at its last lantern. */
+  restoreAt(sv: RunSave) {
+    const L = this.level;
+    const l = L.lanterns[sv.lantern];
+    if (!l) return;
+    for (let i = 0; i <= sv.lantern; i++) { L.lanterns[i].lit = true; L.lanterns[i].charge = 1; }
+    this.lastLantern = l;
+    for (const lv of L.larvae) if (lv.y < l.y + 100) lv.awake = true;
+    for (const w of L.webs) if (w.y < l.y - 300) w.broken = true;
+    for (const o of L.owls) if (o.y < l.y) o.state = 3;
+    this.blask = sv.blask ?? this.blask;
+    this.score = sv.score ?? this.score;
+    this.lanternsLit = sv.lanterns ?? this.lanternsLit;
+    this.larvaeWoken = sv.larvae ?? this.larvaeWoken;
+    this.perfects = sv.perfects ?? this.perfects;
+    this.lost = sv.lost ?? this.lost;
+    this.reviveUsed = !!sv.reviveUsed || !this.mods.revive;
+    const s = this.swarm;
+    s.n = 0;
+    s.spawn(l.x, l.y - 30, sv.flies ?? this.carry.flies, 100);
+    s.cx = l.x; s.cy = l.y - 30; s.tx = l.x; s.ty = l.y;
+    this.maxY = l.y - 30;
+    this.shadowY = l.y - 1000;
+    this.camY = s.cy + 1100 * 0.12;
+    this.time = 5;
+    while (this.hintIdx < L.hints.length && L.hints[this.hintIdx].y < l.y) this.hintIdx++;
+  }
+
   /** Carry state into the next biome. */
   next(): Carry {
     return {
@@ -171,6 +224,10 @@ export class Game {
       heightBase: this.heightBase + this.heightScore,
       reviveUsed: this.reviveUsed,
       lost: this.lost,
+      species: this.carry.species,
+      night: this.carry.night,
+      mutations: [...this.carry.mutations],
+      daily: this.carry.daily,
     };
   }
 
@@ -195,15 +252,16 @@ export class Game {
   tryFlash() {
     if (this.state !== 'play' || this.flashCd > 0) return;
     const s = this.swarm;
-    const perfect = s.order > 0.55 && Math.cos(s.psi) > 0.72 && s.free >= 8;
-    const cost = perfect ? PERFECT_COST : FLASH_COST;
+    const M = this.mods;
+    const perfect = s.order > 0.55 && Math.cos(s.psi) > M.perfectCos && s.free >= 8;
+    const cost = perfect ? M.perfectCost : M.flashCost;
     if (this.blask < cost) {
       this.events.push({ t: 'noBlask' });
       return;
     }
     this.blask -= cost;
     this.flashCd = 0.35;
-    const R = (180 + 6 * Math.sqrt(Math.max(s.free, 1))) * (perfect ? 1.5 : 1);
+    const R = (180 + 6 * Math.sqrt(Math.max(s.free, 1))) * (perfect ? 1.5 : 1) * M.flashR;
     const cx = s.cx, cy = s.cy;
     this.shock = { x: cx, y: cy, t: 0, R, perfect };
     s.flashGlow = perfect ? 2.4 : 1.6;
@@ -275,7 +333,7 @@ export class Game {
     }
 
     if (this.state === 'play') {
-      this.blask = Math.min(100, this.blask + dt * 1.0);
+      this.blask = Math.min(100, this.blask + dt * this.mods.regen);
       this.updateShadow(dt);
       this.updateWebs(dt);
       this.updateBats(dt);
@@ -357,7 +415,7 @@ export class Game {
   private updateShadow(dt: number) {
     const s = this.swarm;
     const d = this.progress;
-    let speed = this.biome.shadowBase + this.biome.shadowRamp * d;
+    let speed = (this.biome.shadowBase + this.biome.shadowRamp * d) * this.mods.shadow;
     const gap = s.cy - this.shadowY;
     if (gap > 1250) speed += (gap - 1250) * 1.2;
     if (this.time < 4) speed = 0;
@@ -403,7 +461,7 @@ export class Game {
         const inside = dx * dx + dy * dy < r2;
         if (inside && s.inWeb[i] !== w) {
           s.inWeb[i] = w;
-          if (web.caught < web.cap && Math.random() < 0.5) {
+          if (web.caught < web.cap + this.mods.webCap && Math.random() < this.mods.webCatch) {
             s.state[i] = STUCK;
             s.web[i] = w;
             s.timer[i] = 0;
@@ -441,7 +499,7 @@ export class Game {
         if (z.kind !== 'bats' || s.cy < z.y0 || s.cy > z.y1) continue;
         z.timer -= dt;
         if (z.timer <= 0) {
-          z.timer = z.interval * (0.8 + Math.random() * 0.4);
+          z.timer = z.interval * this.mods.hazard * (0.8 + Math.random() * 0.4);
           const side = Math.random() < 0.5 ? -1 : 1;
           const y = clamp(s.cy + (Math.random() * 340 - 80), this.camY - this.viewH / 2 + 100, this.camY + this.viewH / 2 - 100);
           this.warns.push({ side, y, t: 0, speed: 300 + d * 90 });
@@ -452,7 +510,7 @@ export class Game {
     for (let k = this.warns.length - 1; k >= 0; k--) {
       const w = this.warns[k];
       w.t += dt;
-      if (w.t >= 1.1) {
+      if (w.t >= 1.1 * this.mods.warn) {
         this.warns.splice(k, 1);
         // bats come out from behind the side trunks
         const x = w.side * (HALF_W + 40);
@@ -482,6 +540,7 @@ export class Game {
           if (s.state[i] !== FREE) continue;
           const dx = s.x[i] - b.x, dy = s.y[i] - b.y;
           if (dx * dx + dy * dy < 26 * 26) {
+            if (Math.random() < this.mods.dodge) continue;
             s.kill(i);
             b.bites++;
             bitten++;
@@ -504,7 +563,7 @@ export class Game {
       if (z.kind === 'bats' || s.cy < z.y0 || s.cy > z.y1) continue;
       z.timer -= dt;
       if (z.timer > 0) continue;
-      z.timer = z.interval * (0.8 + Math.random() * 0.4);
+      z.timer = z.interval * this.mods.hazard * (0.8 + Math.random() * 0.4);
       if (z.kind === 'dragonflies') {
         if (this.dragonflies.length < 2) HZ.spawnDragonfly(this);
       } else if (this.moths.length < 5) HZ.spawnMoth(this);
@@ -554,7 +613,7 @@ export class Game {
       const d = Math.hypot(lv.x - s.cx, lv.y - s.cy);
       if (d < s.radius + 45) {
         lv.awake = true;
-        const n = Math.min(Math.round(lv.n * mercy), MAX_ALIVE - s.n);
+        const n = Math.min(Math.round(lv.n * mercy * this.mods.larva), MAX_ALIVE - s.n);
         if (n > 0) s.spawn(lv.x, lv.y, n, 140);
         this.larvaeWoken += n;
         this.score += 5 * n;
@@ -585,7 +644,8 @@ export class Game {
     l.charge = 1;
     this.lanternsLit++;
     this.lastLantern = l;
-    this.blask = Math.min(100, this.blask + 40);
+    this.blask = Math.min(100, this.blask + this.mods.lanternBlask);
+    if (this.mods.lanternFlies) this.swarm.spawn(l.x, l.y, Math.min(this.mods.lanternFlies, MAX_ALIVE - this.swarm.n), 150);
     this.score += 100;
     for (let k = 0; k < 40; k++) {
       const a = Math.random() * TAU, v = 60 + Math.random() * 180;

@@ -50,6 +50,8 @@ export class Swarm {
   flashGlow = 0; // extra brightness after a flash
   free = 0;
   flow = new FlowField();
+  speedMul = 1;
+  couplingMul = 1;
   private flowT = 0;
   private flowTx = 1e9;
   private flowTy = 1e9;
@@ -140,7 +142,7 @@ export class Swarm {
 
     // calm swarm couples strongly -> synchronized pulses
     const calm = smoothstep(140, 35, this.speed);
-    this.coupling = 0.2 + calm * 3.2;
+    this.coupling = (0.2 + calm * 3.2) * this.couplingMul;
     const K = this.coupling;
     const R = this.order, PSI = this.psi;
 
@@ -193,7 +195,7 @@ export class Swarm {
       let dx: number, dy: number;
       if (!this.formOn && level && this.flow.sample(this.x[i], this.y[i], fs) && fs.d > rad * 0.9 + 24) {
         // far from the target: follow the flow around obstacles
-        const want = Math.min(this.spd[i], fs.d * 3.6);
+        const want = Math.min(this.spd[i] * this.speedMul, fs.d * 3.6);
         // keep a loose slot around the swarm center so the stream stays a swarm
         let sx = this.cx + ox * rad - this.x[i], sy = this.cy + oy * rad - this.y[i];
         const sl = Math.hypot(sx, sy);
@@ -204,7 +206,7 @@ export class Swarm {
         dx = gx - this.x[i];
         dy = gy - this.y[i];
         const dist = Math.hypot(dx, dy) + 1e-4;
-        const want = Math.min(this.spd[i], dist * 3.6);
+        const want = Math.min(this.spd[i] * this.speedMul, dist * 3.6);
         dx = (dx / dist) * want;
         dy = (dy / dist) * want;
       }

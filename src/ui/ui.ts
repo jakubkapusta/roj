@@ -1,10 +1,17 @@
 // DOM overlay: HUD, hints, menu, pause and end screens. Text is Polish.
 
-import type { Game } from '../game/game';
-import type { BiomeDef } from '../game/biomes';
+import type { Game, Carry } from '../game/game';
+import { BIOMES, type BiomeDef } from '../game/biomes';
+import { MUTATIONS, NIGHTS, SPECIES, speciesUnlocked, today, type Meta, type Mutation, type RunSave, type SkyEntry } from '../game/meta';
+
+export type MenuState = { meta: Meta; save: RunSave | null; sky: number };
 
 export type UiHooks = {
-  start: () => void;
+  start: (daily: boolean) => void;
+  cont: () => void;
+  pickSpecies: (id: string) => void;
+  pickNight: (n: number) => void;
+  sky: () => void;
   pause: () => void;
   resume: () => void;
   menu: () => void;
@@ -164,21 +171,69 @@ export class Ui {
     s.classList.toggle('show', on);
   }
 
-  showMenu(best: number, runs: number) {
+  showMenu(st: MenuState) {
+    const { meta, save } = st;
     this.hud.classList.add('hidden');
     this.menu.innerHTML = '';
-    const title = el('h1', 'title', 'Rój');
-    const sub = el('p', 'subtitle', 'Przeprowadź świetliki z dna nocnego lasu aż do księżyca');
-    const btn = el('button', 'btn', 'Leć');
-    btn.addEventListener('click', () => this.h.start());
-    const meta = el('div', 'meta', best > 0 ? `Rekord <b>${best}</b> · wypraw <b>${runs}</b>` : 'Biom 1 z 5 · Ściółka');
-    const how = el('div', 'howto', this.touch
-      ? '<b>Przeciągaj</b> palcem, by prowadzić rój · <b>stuknij dwa razy</b> — Rozbłysk'
-      : '<b>Przytrzymaj mysz</b>, by prowadzić rój · <b>dwuklik</b> lub <b>spacja</b> — Rozbłysk');
+    this.menu.classList.add('menu');
     const top = el('div', 'right');
     top.style.cssText = 'position:absolute;top:calc(var(--safe-top) + 12px);right:16px';
     top.append(this.muteButton());
-    this.menu.append(top, title, sub, btn, meta, how);
+    const title = el('h1', 'title', 'Rój');
+    const sub = el('p', 'subtitle', 'Przeprowadź świetliki z dna nocnego lasu aż do księżyca');
+    const btns = el('div', 'btns');
+    if (save) {
+      const b = BIOMES[save.carry.biome];
+      const c = el('button', 'btn', `Kontynuuj<small>${b.name} · ${save.carry.biome + 1}/${BIOMES.length} · ${save.flies ?? save.carry.flies} świetlików</small>`);
+      c.addEventListener('click', () => this.h.cont());
+      const n = el('button', 'btn ghost', 'Nowa wyprawa');
+      n.addEventListener('click', () => this.h.start(false));
+      btns.append(c, n);
+    } else {
+      const b = el('button', 'btn', 'Leć');
+      b.addEventListener('click', () => this.h.start(false));
+      btns.append(b);
+    }
+    // species
+    const row = el('div', 'species');
+    const desc = el('div', 'sp-desc');
+    for (const sp of SPECIES) {
+      const open = speciesUnlocked(meta, sp.id);
+      const b = el('button', `sp${sp.id === meta.species ? ' on' : ''}${open ? '' : ' locked'}`);
+      const orb = el('span', 'orb');
+      const [r, g, bl] = sp.rgb.map((v) => Math.round(Math.min(1, v) * 255));
+      orb.style.setProperty('--c', `rgb(${r},${g},${bl})`);
+      b.append(orb, el('span', 'sp-n', sp.name));
+      b.addEventListener('click', () => {
+        if (open) this.h.pickSpecies(sp.id);
+        else desc.innerHTML = `<i>Zablokowane:</i> ${sp.unlock}`;
+      });
+      row.append(b);
+    }
+    desc.textContent = (SPECIES.find((x) => x.id === meta.species) ?? SPECIES[0]).desc;
+    const parts: HTMLElement[] = [top, title, sub, btns, row, desc];
+    // night
+    if (meta.night > 1) {
+      const n = Math.min(meta.nightSel, meta.night);
+      const nr = el('div', 'night');
+      const prev = el('button', 'nb', '‹');
+      const next = el('button', 'nb', '›');
+      prev.disabled = n <= 1;
+      next.disabled = n >= meta.night;
+      prev.addEventListener('click', () => this.h.pickNight(n - 1));
+      next.addEventListener('click', () => this.h.pickNight(n + 1));
+      nr.append(prev, el('span', 'nn', `Noc ${n}`), next);
+      parts.push(nr, el('div', 'sp-desc', n > 1 ? `${NIGHTS[n - 1].desc} Wynik ×${(1 + (n - 1) * 0.15).toFixed(2)}` : NIGHTS[0].desc));
+    }
+    const row2 = el('div', 'row2');
+    const d = el('button', 'btn ghost small', `Wyprawa dnia${meta.daily.date === today() && meta.daily.best ? `<small>dziś: ${meta.daily.best}</small>` : '<small>ta sama dla wszystkich</small>'}`);
+    d.addEventListener('click', () => this.h.start(true));
+    const k = el('button', 'btn ghost small', `Twoje niebo<small>${st.sky ? `konstelacji: ${st.sky}` : 'puste'}</small>`);
+    k.addEventListener('click', () => this.h.sky());
+    row2.append(d, k);
+    parts.push(row2);
+    parts.push(el('div', 'meta', meta.best > 0 ? `Rekord <b>${meta.best}</b> · wypraw <b>${meta.runs}</b>` : 'Pięć biomów · od ściółki do gwiazd'));
+    this.menu.append(...parts);
     this.show(this.menu, true);
     this.show(this.pauseEl, false);
     this.show(this.endEl, false);
@@ -196,38 +251,61 @@ export class Ui {
     this.last.h = -1;
   }
 
-  showBiomeDone(g: Game, next: BiomeDef, cont: () => void) {
+  /** Between biomes: summary, what's next, and the pick of one of three mutations. */
+  showBiomeDone(g: Game | null, carry: Carry, offer: Mutation[], choose: (id: string) => void) {
+    const next = BIOMES[carry.biome];
     this.hud.classList.add('hidden');
     this.endEl.innerHTML = '';
-    const t = el('h2', 'h2', g.biome.name);
-    const lead = el('p', 'lead', 'przebyty. Rój leci wyżej.');
-    const st = el('div', 'stats');
-    for (const [a, b] of [['Świetliki', g.swarm.n], ['Wysokość', `${g.heightBase + g.heightScore} m`], ['Wynik', g.total]] as [string, string | number][]) {
-      st.append(el('span', '', a), el('span', '', String(b)));
+    const parts: HTMLElement[] = [];
+    if (g) {
+      parts.push(el('h2', 'h2 sm', `${g.biome.name} przebyta`));
+      const st = el('div', 'stats compact');
+      for (const [a, b] of [['Świetliki', g.swarm.n], ['Wysokość', `${g.heightBase + g.heightScore} m`], ['Wynik', g.total]] as [string, string | number][]) {
+        st.append(el('span', '', a), el('span', '', String(b)));
+      }
+      parts.push(st);
     }
     const nx = el('div', 'nextb');
     nx.append(el('div', 'nextb-k', 'Dalej'), el('div', 'nextb-n', next.name), el('p', 'nextb-l', next.lead), el('div', 'nextb-t', next.threats.join(' · ')));
-    const b = el('button', 'btn', 'Leć dalej');
-    b.addEventListener('click', cont);
-    this.endEl.append(t, lead, st, nx, b);
+    parts.push(nx, el('div', 'nextb-k', 'Wybierz mutację roju'));
+    const cards = el('div', 'muts');
+    for (const m of offer) {
+      const c = el('button', 'mut', `<b>${m.name}</b><span>${m.desc}</span>`);
+      c.addEventListener('click', () => choose(m.id));
+      cards.append(c);
+    }
+    if (!offer.length) {
+      const c = el('button', 'btn', 'Leć dalej');
+      c.addEventListener('click', () => choose(''));
+      cards.append(c);
+    }
+    parts.push(cards);
+    if (carry.mutations.length) parts.push(el('div', 'owned', 'Masz: ' + carry.mutations.map((id) => MUTATIONS.find((m) => m.id === id)?.name).join(' · ')));
+    this.endEl.append(...parts);
     this.show(this.endEl, true);
   }
 
-  showPause() {
+  showPause(carry: Carry) {
     this.pauseEl.innerHTML = '';
     const t = el('h2', 'h2', 'Pauza');
     const lead = el('p', 'lead', 'Rój unosi się w miejscu i czeka.');
+    const info = el('div', 'owned');
+    const sp = SPECIES.find((x) => x.id === carry.species) ?? SPECIES[0];
+    const bits = [`${sp.name} świetliki`, carry.daily ? 'Wyprawa dnia' : `Noc ${carry.night}`];
+    if (carry.mutations.length) bits.push(carry.mutations.map((id) => MUTATIONS.find((m) => m.id === id)?.name).join(', '));
+    info.textContent = bits.join(' · ');
     const b = el('div', 'btns');
     const r = el('button', 'btn', 'Wznów');
     r.addEventListener('click', () => this.h.resume());
-    const m = el('button', 'btn ghost', 'Porzuć wyprawę');
+    const m = el('button', 'btn ghost', 'Do menu');
     m.addEventListener('click', () => this.h.menu());
     b.append(r, m);
-    this.pauseEl.append(t, lead, b);
+    const note = el('div', 'owned', 'Wyprawa zapisuje się przy lampionach — wrócisz do niej z menu.');
+    this.pauseEl.append(t, lead, info, b, note);
     this.show(this.pauseEl, true);
   }
 
-  showEnd(g: Game, won: boolean, best: number, isBest: boolean, again: () => void) {
+  showEnd(g: Game, won: boolean, best: number, isBest: boolean, again: () => void, unlocks: string[]) {
     this.hud.classList.add('hidden');
     this.endEl.innerHTML = '';
     const t = el('h2', won ? 'h2' : 'h2 sad', won ? (g.constellation?.name ?? 'Polana') : 'Rój zgasł');
@@ -240,17 +318,69 @@ export class Ui {
       ['Idealne rozbłyski', g.perfects],
     ];
     if (won) rows.push(['Ocalałe świetliki', g.swarm.n]);
+    if (g.carry.night > 1) rows.push([`Noc ${g.carry.night}`, `×${g.mods.score.toFixed(2)}`]);
     for (const [a, b] of rows) st.append(el('span', '', a), el('span', '', String(b)));
-    st.append(el('span', 'total', 'Wynik'), el('span', 'total', String(g.total)));
+    st.append(el('span', 'total', g.carry.daily ? 'Wyprawa dnia' : 'Wynik'), el('span', 'total', String(g.total)));
     const bestEl = el('div', 'best', isBest ? 'Nowy rekord' : `Rekord: ${best}`);
+    const parts: HTMLElement[] = [t, lead, st, bestEl];
+    for (const u of unlocks) parts.push(el('div', 'unlock', u));
     const b = el('div', 'btns');
     const r = el('button', 'btn', 'Jeszcze raz');
     r.addEventListener('click', again);
     const m = el('button', 'btn ghost', 'Menu');
     m.addEventListener('click', () => this.h.menu());
     b.append(r, m);
-    this.endEl.append(t, lead, st, bestEl, b);
+    parts.push(b);
+    this.endEl.append(...parts);
     this.show(this.endEl, true);
+  }
+
+  /** "Twoje niebo": every finished run as a constellation on one night sky. */
+  showSky(sky: SkyEntry[], back: () => void) {
+    this.menu.classList.remove('menu');
+    this.menu.innerHTML = '';
+    const wrap = el('div', 'sky');
+    const head = el('div', 'sky-head');
+    head.append(el('h2', 'h2 sm', 'Twoje niebo'));
+    const close = el('button', 'btn ghost small', 'Wróć');
+    close.addEventListener('click', back);
+    head.append(close);
+    wrap.append(head);
+    if (!sky.length) {
+      wrap.append(el('p', 'lead', 'Niebo jest jeszcze puste. Ukończ wyprawę, a twój rój zostanie tu na zawsze jako konstelacja.'));
+    } else {
+      const grid = el('div', 'sky-grid');
+      [...sky].reverse().forEach((c, i) => grid.append(this.constellationCard(c, i)));
+      wrap.append(grid);
+    }
+    this.menu.append(wrap);
+    this.show(this.menu, true);
+  }
+
+  private constellationCard(c: SkyEntry, i: number) {
+    const card = el('div', 'sky-card');
+    const xs = c.stars.map((s) => s[0]), ys = c.stars.map((s) => s[1]);
+    const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+    const w = Math.max(80, maxX - minX), h = Math.max(80, maxY - minY);
+    const S = 120 / Math.max(w, h);
+    const px = (x: number) => 80 + (x - (minX + maxX) / 2) * S;
+    const py = (y: number) => 75 - (y - (minY + maxY) / 2) * S;
+    const sp = SPECIES.find((x) => x.id === c.species) ?? SPECIES[0];
+    const col = `rgb(${sp.rgb.map((v) => Math.round(Math.min(1, v * 0.4 + 0.6) * 255)).join(',')})`;
+    let svg = `<svg viewBox="0 0 160 150" class="sky-svg"><defs><filter id="g${i}"><feGaussianBlur stdDeviation="2.2"/></filter></defs>`;
+    for (let k = 0; k < 26; k++) {
+      const a = Math.sin(i * 91 + k * 17.3) * 43758.5, b = Math.sin(i * 37 + k * 9.1) * 12345.6;
+      svg += `<circle cx="${((a - Math.floor(a)) * 160).toFixed(1)}" cy="${((b - Math.floor(b)) * 150).toFixed(1)}" r="0.6" fill="#9fb3d9" opacity="0.5"/>`;
+    }
+    for (const [a, b] of c.links) svg += `<line x1="${px(c.stars[a][0])}" y1="${py(c.stars[a][1])}" x2="${px(c.stars[b][0])}" y2="${py(c.stars[b][1])}" stroke="#8fb0ff" stroke-opacity=".45" stroke-width="1"/>`;
+    c.stars.forEach(([x, y], k) => {
+      const r = 2.2 + ((k * 7) % 3) * 0.6;
+      svg += `<circle cx="${px(x)}" cy="${py(y)}" r="${r * 2.6}" fill="${col}" opacity=".45" filter="url(#g${i})"/><circle class="tw" style="animation-delay:${(k * 0.37) % 2}s" cx="${px(x)}" cy="${py(y)}" r="${r}" fill="#fff"/>`;
+    });
+    svg += '</svg>';
+    card.innerHTML = svg;
+    card.append(el('div', 'sky-name', c.name), el('div', 'sky-meta', `${c.date} · ${c.flies} świetlików · ${c.score} pkt${c.night && c.night > 1 ? ` · Noc ${c.night}` : ''}`));
+    return card;
   }
 
   hint(id: string) {
