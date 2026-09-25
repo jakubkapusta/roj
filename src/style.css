@@ -189,3 +189,9 @@ button, .clickable { pointer-events: auto; }
 .best { color: var(--warm); font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase; margin: -12px 0 22px; min-height: 16px; }
 .howto { margin-top: 26px; font-size: 13px; color: var(--dim); line-height: 1.7; max-width: 330px; }
 .howto b { color: var(--ink); font-weight: 600; }
+
+.nextb { margin: 4px 0 24px; max-width: 320px; }
+.nextb-k { font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--dim); }
+.nextb-n { font-family: var(--display); font-size: 34px; font-weight: 600; margin: 2px 0 4px; text-shadow: 0 0 18px rgba(160, 220, 255, 0.45); }
+.nextb-l { font-family: var(--display); font-style: italic; font-size: 18px; color: var(--ink); margin: 0 0 8px; line-height: 1.3; }
+.nextb-t { font-size: 13px; color: var(--warm); letter-spacing: 0.06em; }

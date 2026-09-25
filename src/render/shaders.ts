@@ -66,10 +66,14 @@ void main(){
     s *= 1. - smoothstep(.85, 1., d);
   } else if (v_kind < 4.5) {    // hard disk (dark bits, eyes)
     s = smoothstep(1., .8, d);
-  } else {                      // progress arc, fraction = kind - 5
+  } else if (v_kind < 6.) {     // progress arc, fraction = kind - 5
     float frac = v_kind - 5.;
     float ang = atan(v_uv.x, v_uv.y) / 6.2831853 + .5;
     s = exp(-pow((d - .82) * 14., 2.)) * step(1. - frac, ang);
+  } else if (v_kind < 6.5) {    // horizontal streak (wind)
+    s = exp(-v_uv.y * v_uv.y * 400.) * (1. - abs(v_uv.x));
+  } else {                      // vertical streak (rain), brighter head at the bottom
+    s = exp(-v_uv.x * v_uv.x * 500.) * (1. - abs(v_uv.y)) * (.35 + .65 * (.5 - .5 * v_uv.y));
   }
   o = vec4(v_col.rgb * s * v_col.a, s * v_col.a);
 }`;
@@ -113,6 +117,7 @@ uniform float u_rim;
 uniform vec3 u_amb;
 uniform vec3 u_fogCol;
 uniform float u_fog;
+uniform vec3 u_topLight;
 out vec4 o;
 void main(){
   vec2 uv = gl_FragCoord.xy / u_res;
@@ -127,6 +132,9 @@ void main(){
   float rim = pow(e, 5.) * facing;
   vec3 base = u_col * v_tone;
   vec3 c = base * u_amb + base * L * (.15 + diff * 1.2) * u_gain + L * rim * u_rim;
+  // moonlight from above: bright tops, rim on upper edges
+  float up = max(n.y, 0.);
+  c += u_topLight * v_tone * (pow(up, 1.6) * .8 + pow(e, 6.) * max(v_nrm.y, 0.) * 1.6 + pow(e, 4.) * .35);
   c = mix(c, u_fogCol, u_fog);
   o = vec4(c, 1.);
 }`;
@@ -181,10 +189,38 @@ uniform vec3 u_top;
 uniform vec3 u_swarm;
 uniform float u_fogAmt;
 uniform vec2 u_moon;      // moon uv y (can be > 1 = offscreen), strength
+uniform float u_stars;
+uniform float u_aurora;
+uniform float u_beams;
+uniform float u_flash;
 out vec4 o;
 void main(){
   vec2 wp = (v_uv * 2. - 1.) / u_view.zw + u_view.xy * .12;
   vec3 c = mix(u_bot, u_top, clamp(v_uv.y * .9 + .05, 0., 1.));
+  float asp = u_view.w / u_view.z;
+  if (u_stars > 0.) {
+    vec2 sp = vec2(v_uv.x * asp, v_uv.y) * 90. + vec2(0., u_view.y * .004);
+    vec2 cell = floor(sp), f = fract(sp) - .5;
+    float h = hash12(cell);
+    if (h > .9) {
+      vec2 off = vec2(hash12(cell + 7.1), hash12(cell + 3.3)) - .5;
+      float r = length(f - off * .6);
+      float tw = .55 + .45 * sin(u_time * (1. + h * 3.) + h * 40.);
+      float big = step(.985, h);
+      c += vec3(.75, .82, 1.) * smoothstep(.09 + big * .06, 0., r) * tw * u_stars * (.4 + big * 1.6) * (.4 + .6 * v_uv.y);
+    }
+  }
+  if (u_aurora > 0.) {
+    float x = v_uv.x * asp;
+    float n = fbm(vec2(x * 1.4, u_time * .05));
+    float yc = .72 + (n - .5) * .25 + .05 * sin(x * 3. + u_time * .15);
+    float band = exp(-pow((v_uv.y - yc) * 7., 2.));
+    float curtain = .5 + .5 * sin(x * 60. + n * 12. + u_time * .4);
+    curtain = pow(curtain, 3.) * .6 + .4;
+    float up = smoothstep(yc - .03, yc + .18, v_uv.y) * (1. - smoothstep(yc, yc + .35, v_uv.y));
+    vec3 ac = mix(vec3(.1, .9, .5), vec3(.5, .25, .9), smoothstep(yc - .05, yc + .2, v_uv.y));
+    c += ac * (band * .6 + up * .5) * curtain * .2 * u_aurora;
+  }
   float f = fbm(wp * .0025 + vec2(u_time * .012, -u_time * .006));
   f = smoothstep(.25, .85, f);
   vec4 L = texture(u_lit, v_uv);
@@ -195,6 +231,15 @@ void main(){
   vec2 dm = (v_uv - mp) * vec2(u_view.w / u_view.z, 1.);
   float md = length(dm);
   c += vec3(.55, .65, .9) * (exp(-md * 7.) * .6 + smoothstep(.07, .065, md) * 2.5) * u_moon.y;
+  if (u_beams > 0.) {
+    vec2 dm2 = v_uv - mp;
+    float ang = atan(dm2.x * asp, dm2.y);
+    float rays = fbm(vec2(ang * 7., u_time * .04));
+    rays = pow(smoothstep(.35, .8, rays), 2.);
+    float fall = exp(-length(dm2) * 1.6) * smoothstep(.02, .15, length(dm2));
+    c += vec3(.35, .45, .75) * rays * fall * .12 * u_beams * (.5 + f);
+  }
+  c += vec3(.45, .5, .75) * u_flash * (.25 + .75 * v_uv.y) * .2;
   o = vec4(c, 1.);
 }`;
 

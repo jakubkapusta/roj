@@ -15,9 +15,13 @@ Dev helper: `window.__roj = { game, renderer }` (e.g. `__roj.game.swarm`, `__roj
 ## World and code map
 
 - World units, **y up**. Playfield is ~600 wide (`HALF_W = 300`), the renderer fits 600×1100 units into the screen (`PLAY_W/PLAY_H`). Camera x is always 0; on wide screens the parallax forest fills the sides.
-- `src/game/level.ts` — biome generation from seeded "pieces" (`pieceBranches`, `pieceSqueeze`, `pieceWeb`, `pieceWebField`, `pieceShelves`, `pieceBats`, `pieceLarvae`, `pieceLantern`, `pieceEnd`), walls, entities, baked collision **SDF** (`sdfAt`). Use `this.rng`, never `Math.random()`, so a seed reproduces the level.
+- `src/game/biomes.ts` — the 5 biomes of a run (Ściółka, Staw, Korony, Burza, Nad chmurami): palette, wall/backdrop style, moon/stars/aurora, wind, rain, Shadow speed, length.
+- `src/game/level.ts` — generic level container: walls, silhouette shapes, entities (larvae, lanterns, webs, frogs, owls, zones, gusts, pads), builder helpers (`branch`, `bigLeaf`, `mushroomCluster`…), baked collision **SDF** (`sdfAt`). Use `L.rng`, never `Math.random()`, so a seed reproduces the level.
+- `src/game/gen/*.ts` — one generator per biome built from weighted "pieces" via `sequence()` in `shared.ts` (lantern every ~2.3k units, `force` to introduce a threat early).
+- `src/game/hazards.ts` — frogs (aim line → tongue), dragonflies (hover → aim → dash ×3), owls (eyes open → bezier swoop; flash while eyes are open blinds it), gusts, rain waves + lightning, moths (drawn to lit star lanterns). `flashHazards` is what a Rozbłysk does to them.
 - `src/game/swarm.ts` — fireflies in typed arrays; steering via personal orbiting offsets + **flow field** (`flow.ts`, Dijkstra on a 16-unit grid around the swarm) so the swarm pours around obstacles; SDF collision; Kuramoto phase coupling (`order`, `psi`) drives synchronized blinking and the perfect flash.
-- `src/game/game.ts` — rules: Shadow (Cień) rising from below, webs, bats + warnings, larvae, lanterns, flash, revive, scoring, events for UI/audio.
+- `src/game/game.ts` — rules for one biome: Shadow (Cień), webs, bats, larvae, lanterns, flash, revive, scoring, events for UI/audio. A run is a chain of `Game`s: `game.next()` returns the `Carry` (flies, Blask, score, height, revive) for the next biome; the last biome ends with `formConstellation()` (swarm `formOn` targets), saved to `roj.sky.v1`.
+- Testing: `#b3` in the URL starts a run at biome 3.
 - `src/game/input.ts` — touch = relative drag, second finger / double tap = flash; mouse = hold to lead, double click = flash; space/arrows.
 - `src/render/renderer.ts` — pipeline: occluders (¼ res) → swarm light (¼) → shadowed light + shafts (¼) → scene (bg, 3 parallax layers from `backdrop.ts`, playfield silhouettes, dynamic silhouettes, additive sprites, haze, Shadow) → bloom → composite (shockwave, CA, ACES, grain). Shaders in `shaders.ts`; silhouette geometry in `mesh.ts` (vertices carry pseudo-normal + edge for rim light).
 - `src/audio/audio.ts` — all sounds synthesized (WebAudio), bells in D minor pentatonic.

@@ -156,6 +156,29 @@ export class MeshBuilder {
     this.tube(pts, sw, tone);
   }
 
+  /** Spine of a broad leaf: straight out, drooping at the tip. */
+  static broadSpine(x: number, y: number, ang: number, len: number, w: number, droop: number) {
+    const pts: P[] = [];
+    const seg = 10;
+    const dx = Math.cos(ang), dy = Math.sin(ang);
+    for (let k = 0; k <= seg; k++) {
+      const t = k / seg;
+      pts.push({
+        x: x + dx * len * t,
+        y: y + dy * len * t - droop * len * t * t,
+        r: Math.max(0.6, w * Math.sin(Math.PI * Math.pow(t, 0.62)) * (1 - 0.25 * t)),
+      });
+    }
+    return pts;
+  }
+
+  /** Broad leaf with a lighter midrib. */
+  broadLeaf(x: number, y: number, ang: number, len: number, w: number, droop: number, tone = 1) {
+    const pts = MeshBuilder.broadSpine(x, y, ang, len, w, droop);
+    this.tube(pts, pts.map((_, k) => (k / pts.length) * 0.25), tone);
+    this.tube(pts.map((p, k) => ({ x: p.x, y: p.y + 0.5, r: 1.1 * (1 - k / pts.length) + 0.3 })), pts.map((_, k) => (k / pts.length) * 0.25), tone * 1.9);
+  }
+
   /** Blade of grass / thin tendril, curving by `bend`. */
   blade(x: number, y: number, ang: number, len: number, w: number, bend: number, sway: number, tone = 1) {
     const pts: P[] = [];

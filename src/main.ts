@@ -6,7 +6,8 @@ import '@fontsource/quicksand/600.css';
 import './style.css';
 
 import { Renderer } from './render/renderer';
-import { Game } from './game/game';
+import { Game, newRun } from './game/game';
+import { BIOMES } from './game/biomes';
 import { Input } from './game/input';
 import { Ui } from './ui/ui';
 import { Sound } from './audio/audio';
@@ -63,24 +64,36 @@ const input = new Input(canvas, {
 });
 
 function makeMenuGame() {
-  const g = new Game(1234);
+  const g = new Game(newRun(1234, 0));
   g.demo = true;
   return g;
 }
 
+/** `#b3` in the URL starts a run at biome 3 (1-based) — handy for testing. */
+function startBiomeFromHash() {
+  const m = /b(\d)/.exec(location.hash);
+  return m ? Math.max(0, Math.min(BIOMES.length - 1, Number(m[1]) - 1)) : 0;
+}
+
 function startRun() {
+  meta.runs++;
+  saveMeta();
+  enterBiome(new Game(newRun((Date.now() ^ (Math.random() * 1e9)) >>> 0, startBiomeFromHash())));
+  setTimeout(() => ui.hint('move'), 800);
+}
+
+function enterBiome(g: Game) {
   sound.unlock();
   fade = 1;
   fadeTarget = 0;
-  game = new Game((Date.now() ^ (Math.random() * 1e9)) >>> 0);
+  game = g;
   mode = 'play';
   endShown = false;
   input.reset();
   ui.touch = input.isTouch || matchMedia('(pointer: coarse)').matches;
   ui.hideScreens();
-  meta.runs++;
-  saveMeta();
-  setTimeout(() => ui.hint('move'), 800);
+  ui.setBiome(g.biome.name, g.carry.biome + 1, BIOMES.length);
+  sound.setBiome(g.biome.id);
 }
 
 function pause() {
@@ -114,7 +127,7 @@ function handleEvents() {
   for (const e of game.events) {
     switch (e.t) {
       case 'larva': sound.larva(e.n); break;
-      case 'lantern': sound.lantern(e.k); ui.pop('Lampion zapalony'); break;
+      case 'lantern': sound.lantern(e.k); ui.pop(e.star ? 'Gwiazda zapalona' : 'Lampion zapalony'); break;
       case 'flash':
         sound.flash(e.perfect);
         if (e.perfect) ui.pop('Idealnie!');
@@ -128,6 +141,16 @@ function handleEvents() {
       case 'finish': sound.finish(); break;
       case 'over': sound.over(); break;
       case 'hint': ui.hint(e.id); break;
+      case 'frogAim': sound.croak(); break;
+      case 'frogStrike': sound.slurp(); break;
+      case 'dragonfly': sound.buzz(); break;
+      case 'dash': sound.dash(); break;
+      case 'owl': sound.hoot(); break;
+      case 'swoop': sound.swoop(); break;
+      case 'owlBlind': ui.pop('Sowa oślepiona'); break;
+      case 'gust': sound.gust(); break;
+      case 'rainWarn': sound.rumble(); ui.pop('Ulewa!'); break;
+      case 'thunder': sound.thunder(e.delay); break;
     }
   }
   game.events.length = 0;
@@ -139,12 +162,18 @@ function vibrate(ms: number) {
 
 function checkEnd() {
   if (endShown) return;
-  const won = game.state === 'finished' && game.stateT > 3.2;
+  const won = game.state === 'finished' && game.stateT > (game.constellation ? 7 : 3.2);
   const lost = game.state === 'over' && game.stateT > 1.6;
   if (!won && !lost) return;
   endShown = true;
   mode = 'end';
   input.reset();
+  if (won && !game.isLast) {
+    const g = game;
+    ui.showBiomeDone(g, BIOMES[g.carry.biome + 1], () => enterBiome(new Game(g.next())));
+    return;
+  }
+  if (won && game.constellation) saveConstellation(game);
   const total = game.total;
   const isBest = total > meta.best;
   if (isBest) meta.best = total;
@@ -184,6 +213,7 @@ function frame(now: number) {
     const slowmo = game.state === 'reviving' ? 0.35 : game.state === 'over' ? 0.4 : 1;
     game.update(dt * slowmo);
     handleEvents();
+    sound.setRain(game.rain);
     ui.update(game, dt);
     checkEnd();
   }
@@ -197,6 +227,16 @@ ui.showMenu(meta.best, meta.runs);
 requestAnimationFrame(frame);
 
 // ------------------------------------------------------------ persistence
+function saveConstellation(g: Game) {
+  const c = g.constellation!;
+  try {
+    const sky = JSON.parse(localStorage.getItem('roj.sky.v1') || '[]');
+    const cy = c.stars.reduce((a, s) => a + s[1], 0) / c.stars.length;
+    sky.push({ name: c.name, stars: c.stars.map(([x, y]) => [Math.round(x), Math.round(y - cy)]), links: c.links, flies: g.swarm.n, score: g.total, date: new Date().toISOString().slice(0, 10) });
+    localStorage.setItem('roj.sky.v1', JSON.stringify(sky));
+  } catch { /* ignore */ }
+}
+
 function loadMeta() {
   try {
     const m = JSON.parse(localStorage.getItem('roj.meta.v1') || '{}');

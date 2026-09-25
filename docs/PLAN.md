@@ -64,6 +64,11 @@ Trudność rośnie z biomem i w jego obrębie (węższe przejścia, więcej zagr
 - **Noce 1–10**: kolejne poziomy utrudnień po pierwszym przejściu.
 - **Wyprawa dnia**: ziarno z daty.
 
+## Stan
+
+- Etap 1 zrobiony (prototyp Ściółki).
+- Etap 2 zrobiony: wszystkie 5 biomów z własną grafiką, zagrożeniami i dźwiękiem, przejścia między biomami, finał z konstelacją (zapisywaną do przyszłego „Twojego nieba”). Strojenie trudności — później, po testach na telefonie.
+
 ## Etapy
 
 1. **Prototyp** (teraz): rój, światło, biom Ściółka, larwy, lampiony, pajęczyny, nietoperze, Cień, rozbłysk z synchronizacją, podstawowy dźwięk.

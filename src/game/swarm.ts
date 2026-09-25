@@ -29,6 +29,10 @@ export class Swarm {
   web = new Int16Array(MAX_FLIES);
   inWeb = new Int16Array(MAX_FLIES);
   hue = new Float32Array(MAX_FLIES);
+  formX = new Float32Array(MAX_FLIES);
+  formY = new Float32Array(MAX_FLIES);
+  /** Every fly seeks its own formation point (the final constellation). */
+  formOn = false;
 
   // target & aggregates
   tx = 0;
@@ -94,7 +98,7 @@ export class Swarm {
   }
 
   private copy(from: number, to: number) {
-    const arrs = [this.x, this.y, this.vx, this.vy, this.ox, this.oy, this.orb, this.agil, this.spd, this.w1, this.w2, this.ph, this.om, this.bright, this.timer, this.hue];
+    const arrs = [this.x, this.y, this.vx, this.vy, this.ox, this.oy, this.orb, this.agil, this.spd, this.w1, this.w2, this.ph, this.om, this.bright, this.timer, this.hue, this.formX, this.formY];
     for (const a of arrs) a[to] = a[from];
     this.state[to] = this.state[from];
     this.web[to] = this.web[from];
@@ -180,10 +184,14 @@ export class Swarm {
       const oy = this.ox[i] * sa + this.oy[i] * ca;
       this.ox[i] = ox;
       this.oy[i] = oy;
-      const gx = tx + ox * rad, gy = ty + oy * rad;
+      let gx = tx + ox * rad, gy = ty + oy * rad;
+      if (this.formOn) {
+        gx = this.formX[i];
+        gy = this.formY[i];
+      }
 
       let dx: number, dy: number;
-      if (level && this.flow.sample(this.x[i], this.y[i], fs) && fs.d > rad * 0.9 + 24) {
+      if (!this.formOn && level && this.flow.sample(this.x[i], this.y[i], fs) && fs.d > rad * 0.9 + 24) {
         // far from the target: follow the flow around obstacles
         const want = Math.min(this.spd[i], fs.d * 3.6);
         // keep a loose slot around the swarm center so the stream stays a swarm

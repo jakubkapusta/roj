@@ -1,6 +1,7 @@
 // DOM overlay: HUD, hints, menu, pause and end screens. Text is Polish.
 
 import type { Game } from '../game/game';
+import type { BiomeDef } from '../game/biomes';
 
 export type UiHooks = {
   start: () => void;
@@ -31,6 +32,24 @@ const HINTS: Record<string, [touch: string, mouse: string]> = {
     'Nietoperze! <b>Pierścień echa</b> na brzegu zdradza, skąd nadlecą. Rozbłysk je płoszy',
     'Nietoperze! <b>Pierścień echa</b> na brzegu zdradza, skąd nadlecą. Rozbłysk je płoszy',
   ],
+  frogs: [
+    'Żaby! Gdy <b>oczy rozbłysną</b>, a przez mrok przebiegnie linia — zejdź z niej. Rozbłysk je ogłusza',
+    'Żaby! Gdy <b>oczy rozbłysną</b>, a przez mrok przebiegnie linia — zejdź z niej. Rozbłysk je ogłusza',
+  ],
+  dragonflies: [
+    'Ważka zawisa, <b>drży</b> i rzuca się prosto przed siebie. Usuń rój z jej toru',
+    'Ważka zawisa, <b>drży</b> i rzuca się prosto przed siebie. Usuń rój z jej toru',
+  ],
+  owl: [
+    'Na gałęzi śpi <em>sowa</em>. Gdy otworzy oczy — <b>Rozbłysk</b> ją oślepi, zanim zanurkuje',
+    'Na gałęzi śpi <em>sowa</em>. Gdy otworzy oczy — <b>Rozbłysk</b> ją oślepi, zanim zanurkuje',
+  ],
+  wind: ['Smugi pyłku zapowiadają <b>podmuch</b>. Trzymaj rój z dala od pajęczyn i ścian', 'Smugi pyłku zapowiadają <b>podmuch</b>. Trzymaj rój z dala od pajęczyn i ścian'],
+  rain: ['Deszcz gasi świetliki. Gdy nadciąga <b>ulewa</b>, schowaj rój <em>pod liściem</em>', 'Deszcz gasi świetliki. Gdy nadciąga <b>ulewa</b>, schowaj rój <em>pod liściem</em>'],
+  moths: [
+    'Ćmy lecą do światła i gaszą świetliki. Zwabi je <em>zapalona gwiazda</em>, Rozbłysk je spali',
+    'Ćmy lecą do światła i gaszą świetliki. Zwabi je <em>zapalona gwiazda</em>, Rozbłysk je spali',
+  ],
   sync: [
     'Spokojny rój zaczyna <b>błyskać razem</b>. Rozbłysk w szczycie pulsu jest silniejszy i prawie darmowy',
     'Spokojny rój zaczyna <b>błyskać razem</b>. Rozbłysk w szczycie pulsu jest silniejszy i prawie darmowy',
@@ -60,6 +79,7 @@ export class Ui {
   private heightEl: HTMLElement;
   private progEl: HTMLElement;
   private scoreEl: HTMLElement;
+  private biomeEl!: HTMLElement;
   private hintEl: HTMLElement;
   private popEl: HTMLElement;
   private dangerEl: HTMLElement;
@@ -102,6 +122,7 @@ export class Ui {
     left.append(this.countEl, this.blaskBar, this.syncEl);
     const mid = el('div', 'center');
     this.heightEl = el('div', 'height', '0<small>METRÓW</small>');
+    this.biomeEl = this.heightEl.querySelector('small')!;
     const prog = el('div', 'progress');
     this.progEl = el('i');
     prog.append(this.progEl);
@@ -170,6 +191,28 @@ export class Ui {
     this.hud.classList.remove('hidden');
   }
 
+  setBiome(name: string, idx: number, total: number) {
+    this.biomeEl.textContent = `${name} · ${idx}/${total}`;
+    this.last.h = -1;
+  }
+
+  showBiomeDone(g: Game, next: BiomeDef, cont: () => void) {
+    this.hud.classList.add('hidden');
+    this.endEl.innerHTML = '';
+    const t = el('h2', 'h2', g.biome.name);
+    const lead = el('p', 'lead', 'przebyty. Rój leci wyżej.');
+    const st = el('div', 'stats');
+    for (const [a, b] of [['Świetliki', g.swarm.n], ['Wysokość', `${g.heightBase + g.heightScore} m`], ['Wynik', g.total]] as [string, string | number][]) {
+      st.append(el('span', '', a), el('span', '', String(b)));
+    }
+    const nx = el('div', 'nextb');
+    nx.append(el('div', 'nextb-k', 'Dalej'), el('div', 'nextb-n', next.name), el('p', 'nextb-l', next.lead), el('div', 'nextb-t', next.threats.join(' · ')));
+    const b = el('button', 'btn', 'Leć dalej');
+    b.addEventListener('click', cont);
+    this.endEl.append(t, lead, st, nx, b);
+    this.show(this.endEl, true);
+  }
+
   showPause() {
     this.pauseEl.innerHTML = '';
     const t = el('h2', 'h2', 'Pauza');
@@ -187,11 +230,11 @@ export class Ui {
   showEnd(g: Game, won: boolean, best: number, isBest: boolean, again: () => void) {
     this.hud.classList.add('hidden');
     this.endEl.innerHTML = '';
-    const t = el('h2', won ? 'h2' : 'h2 sad', won ? 'Polana' : 'Rój zgasł');
-    const lead = el('p', 'lead', won ? 'Księżyc widzi twój rój. Ściółka przebyta.' : 'Ostatnie światełko zniknęło w mroku.');
+    const t = el('h2', won ? 'h2' : 'h2 sad', won ? (g.constellation?.name ?? 'Polana') : 'Rój zgasł');
+    const lead = el('p', 'lead', won ? 'Nowa konstelacja świeci na twoim niebie.' : `Ostatnie światełko zgasło — ${g.biome.name}.`);
     const st = el('div', 'stats');
     const rows: [string, string | number][] = [
-      ['Wysokość', `${Math.floor(g.maxY / 10)} m`],
+      ['Wysokość', `${g.heightBase + g.heightScore} m`],
       ['Zapalone lampiony', g.lanternsLit],
       ['Obudzone larwy', g.larvaeWoken],
       ['Idealne rozbłyski', g.perfects],
@@ -261,7 +304,7 @@ export class Ui {
       this.countNum.textContent = String(s.n);
       this.last.n = s.n;
     }
-    const hgt = Math.floor(g.maxY / 10);
+    const hgt = g.heightBase + g.heightScore;
     if (hgt !== this.last.h) {
       this.heightEl.firstChild!.textContent = String(hgt);
       this.progEl.style.width = `${(g.progress * 100).toFixed(1)}%`;

@@ -12,6 +12,10 @@ export class Sound {
   muted = false;
   private noiseBuf!: AudioBuffer;
   private lastLoss = 0;
+  private biome = 'sciolka';
+  private windGain!: GainNode;
+  private rainGain!: GainNode;
+  private padGain!: GainNode;
 
   constructor() {
     try {
@@ -113,6 +117,7 @@ export class Sound {
     wf.frequency.value = 380;
     const wg = ctx.createGain();
     wg.gain.value = 0.035;
+    this.windGain = wg;
     const wl = ctx.createOscillator();
     wl.frequency.value = 0.07;
     const wlg = ctx.createGain();
@@ -121,9 +126,48 @@ export class Sound {
     wsrc.connect(wf).connect(wg).connect(this.amb);
     wsrc.start();
     wl.start();
+    // rain (storm)
+    const rsrc = ctx.createBufferSource();
+    rsrc.buffer = this.noiseBuf;
+    rsrc.loop = true;
+    const rf = ctx.createBiquadFilter();
+    rf.type = 'bandpass';
+    rf.frequency.value = 1400;
+    rf.Q.value = 0.5;
+    this.rainGain = ctx.createGain();
+    this.rainGain.gain.value = 0;
+    rsrc.connect(rf).connect(this.rainGain).connect(this.amb);
+    rsrc.start();
+    // airy pad above the clouds
+    this.padGain = ctx.createGain();
+    this.padGain.gain.value = 0;
+    const pf = ctx.createBiquadFilter();
+    pf.type = 'lowpass';
+    pf.frequency.value = 1200;
+    pf.connect(this.padGain).connect(this.verb);
+    for (const f of [146.8, 220, 293.7, 349.2, 440]) {
+      for (const det of [-4, 4]) {
+        const o = ctx.createOscillator();
+        o.type = 'triangle';
+        o.frequency.value = f;
+        o.detune.value = det;
+        const g = ctx.createGain();
+        g.gain.value = 0.012;
+        o.connect(g).connect(pf);
+        o.start();
+      }
+    }
+    // frogs croaking far away (pond)
+    const croakTick = () => {
+      if (!this.ctx) return;
+      if (this.biome === 'staw') this.croak(0.25, Math.random() * 1.6 - 0.8);
+      setTimeout(croakTick, 700 + Math.random() * 2200);
+    };
+    croakTick();
     // crickets
     const tick = () => {
       if (!this.ctx) return;
+      if (this.biome === 'burza' || this.biome === 'niebo') { setTimeout(tick, 1000); return; }
       const now = this.ctx.currentTime;
       const pan = this.ctx.createStereoPanner();
       pan.pan.value = Math.random() * 1.6 - 0.8;
@@ -145,6 +189,153 @@ export class Sound {
       setTimeout(tick, 350 + Math.random() * 1400);
     };
     tick();
+  }
+
+  setBiome(id: string) {
+    this.biome = id;
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.padGain.gain.setTargetAtTime(id === 'niebo' ? 1 : 0, t, 2);
+    this.windGain.gain.setTargetAtTime(id === 'korony' ? 0.06 : id === 'burza' ? 0.08 : id === 'niebo' ? 0.05 : 0.035, t, 1.5);
+    if (id !== 'burza') this.rainGain.gain.setTargetAtTime(0, t, 1);
+  }
+
+  /** 0..1 rain intensity (storm only). */
+  setRain(v: number) {
+    if (!this.ctx || this.biome !== 'burza') return;
+    this.rainGain.gain.setTargetAtTime(0.05 + v * 0.22, this.ctx.currentTime, 0.3);
+  }
+
+  croak(vol = 1, pan = 0) {
+    if (!this.ctx) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const p = ctx.createStereoPanner();
+    p.pan.value = pan;
+    p.connect(this.fx);
+    for (let k = 0; k < 2; k++) {
+      const t0 = t + k * 0.13;
+      const o = ctx.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(180, t0);
+      o.frequency.exponentialRampToValueAtTime(110, t0 + 0.1);
+      const f = ctx.createBiquadFilter();
+      f.type = 'bandpass';
+      f.frequency.value = 520;
+      f.Q.value = 3;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t0);
+      g.gain.linearRampToValueAtTime(0.09 * vol, t0 + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.12);
+      o.connect(f).connect(g).connect(p);
+      o.start(t0);
+      o.stop(t0 + 0.14);
+    }
+  }
+
+  slurp() {
+    if (!this.ctx) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(900, t);
+    o.frequency.exponentialRampToValueAtTime(180, t + 0.18);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.16, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+    o.connect(g).connect(this.fx);
+    o.start(t);
+    o.stop(t + 0.25);
+  }
+
+  buzz() {
+    if (!this.ctx) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const o = ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.value = 95;
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 32;
+    const lg = ctx.createGain();
+    lg.gain.value = 0.03;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.04, t + 0.2);
+    g.gain.linearRampToValueAtTime(0, t + 1.2);
+    lfo.connect(lg).connect(g.gain);
+    const f = ctx.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.value = 900;
+    o.connect(f).connect(g).connect(this.fx);
+    o.start(t);
+    lfo.start(t);
+    o.stop(t + 1.3);
+    lfo.stop(t + 1.3);
+  }
+
+  dash() {
+    this.whoosh(0.35, 2500, 700, 0.14);
+  }
+
+  swoop() {
+    this.whoosh(1.1, 300, 1800, 0.25);
+  }
+
+  gust() {
+    this.whoosh(2.2, 200, 900, 0.12);
+  }
+
+  private whoosh(dur: number, f0: number, f1: number, vol: number) {
+    if (!this.ctx) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.Q.value = 0.8;
+    bp.frequency.setValueAtTime(f0, t);
+    bp.frequency.exponentialRampToValueAtTime(f1, t + dur * 0.6);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(vol, t + dur * 0.4);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    this.noise(bp, t, dur + 0.05);
+    bp.connect(g).connect(this.fx);
+  }
+
+  hoot() {
+    if (!this.ctx) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    for (const [dt, dur] of [[0, 0.25], [0.45, 0.5]] as const) {
+      const o = ctx.createOscillator();
+      o.type = 'sine';
+      const t0 = t + dt;
+      o.frequency.setValueAtTime(390, t0);
+      o.frequency.linearRampToValueAtTime(360, t0 + dur);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t0);
+      g.gain.linearRampToValueAtTime(0.16, t0 + 0.05);
+      g.gain.linearRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g).connect(this.fx);
+      o.start(t0);
+      o.stop(t0 + dur + 0.05);
+    }
+  }
+
+  rumble() {
+    this.thunder(0, 0.5);
+  }
+
+  thunder(delay: number, vol = 1) {
+    if (!this.ctx) return;
+    const ctx = this.ctx, t = ctx.currentTime + delay;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(600, t);
+    lp.frequency.exponentialRampToValueAtTime(80, t + 2.5);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.5 * vol, t + 0.05);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 3);
+    this.noise(lp, t, 3.1);
+    lp.connect(g).connect(this.master);
   }
 
   /** Bell in the pentatonic scale; step can be any integer (wraps into octaves). */

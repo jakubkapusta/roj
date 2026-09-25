@@ -1,12 +1,36 @@
-// Game rules for one biome run: swarm, pickups, hazards, the rising Shadow, flash, scoring.
+// Game rules for one biome of a run: swarm, pickups, hazards, the rising Shadow, flash, scoring.
 
 import { clamp, damp, TAU } from '../core/math';
+import { hashString, makeRng } from '../core/rng';
 import { Level, type Lantern } from './level';
 import { Swarm, FREE, STUCK } from './swarm';
+import { BIOMES, type BiomeDef } from './biomes';
+import * as HZ from './hazards';
+
+/** What a run carries from one biome to the next. */
+export type Carry = {
+  seed: number;
+  biome: number;
+  flies: number;
+  blask: number;
+  score: number;
+  lanterns: number;
+  larvae: number;
+  perfects: number;
+  heightBase: number;
+  reviveUsed: boolean;
+  lost: number;
+};
+
+export function newRun(seed: number, biome = 0): Carry {
+  return { seed, biome, flies: 200, blask: 60, score: 0, lanterns: 0, larvae: 0, perfects: 0, heightBase: 0, reviveUsed: false, lost: 0 };
+}
+
+export type Constellation = { name: string; stars: [number, number][]; links: [number, number][]; t: number };
 
 export type GameEvent =
   | { t: 'larva'; x: number; y: number; n: number }
-  | { t: 'lantern'; x: number; y: number; k: number }
+  | { t: 'lantern'; x: number; y: number; k: number; star: boolean }
   | { t: 'flash'; perfect: boolean }
   | { t: 'noBlask' }
   | { t: 'batWarn'; side: number }
@@ -16,7 +40,17 @@ export type GameEvent =
   | { t: 'revive' }
   | { t: 'finish' }
   | { t: 'over' }
-  | { t: 'hint'; id: string };
+  | { t: 'hint'; id: string }
+  | { t: 'frogAim' }
+  | { t: 'frogStrike' }
+  | { t: 'dragonfly' }
+  | { t: 'dash' }
+  | { t: 'owl' }
+  | { t: 'swoop' }
+  | { t: 'owlBlind' }
+  | { t: 'gust' }
+  | { t: 'rainWarn' }
+  | { t: 'thunder'; delay: number };
 
 export type Particle = {
   x: number; y: number; vx: number; vy: number;
@@ -35,7 +69,6 @@ export type Shock = { x: number; y: number; t: number; R: number; perfect: boole
 
 export const SWARM_RGB: [number, number, number] = [0.62, 1.0, 0.28];
 
-const START_FLIES = 200;
 const MAX_ALIVE = 800;
 const FLASH_COST = 35;
 const PERFECT_COST = 10;
@@ -43,6 +76,8 @@ const BAT_BITES = 16;
 
 export class Game {
   level: Level;
+  biome: BiomeDef;
+  carry: Carry;
   swarm = new Swarm();
   time = 0;
   state: 'play' | 'reviving' | 'finished' | 'over' = 'play';
@@ -73,12 +108,36 @@ export class Game {
   private shadowAcc = 0;
   private dynHints = new Set<string>();
   finishBonus = 0;
+  heightBase = 0;
   /** Menu backdrop: swarm only, no hazards. */
   demo = false;
+  dragonflies: HZ.Dragonfly[] = [];
+  moths: HZ.Moth[] = [];
+  drops: HZ.Drop[] = [];
+  wind = 0;
+  windDir = 0;
+  rain = 0;
+  rainPhase = 0;
+  rainT = 6;
+  lightning = 0;
+  boltT = 3;
+  boltX = 0;
+  boltSeed = 0;
+  constellation: Constellation | null = null;
 
-  constructor(seed: number) {
-    this.level = new Level(seed);
-    this.swarm.spawn(0, 260, START_FLIES, 120);
+  constructor(carry: Carry) {
+    this.carry = carry;
+    this.biome = BIOMES[carry.biome];
+    this.level = new Level(hashString(`${carry.seed}:${carry.biome}`), this.biome);
+    this.blask = carry.blask;
+    this.score = carry.score;
+    this.lanternsLit = carry.lanterns;
+    this.larvaeWoken = carry.larvae;
+    this.perfects = carry.perfects;
+    this.heightBase = carry.heightBase;
+    this.reviveUsed = carry.reviveUsed;
+    this.lost = carry.lost;
+    this.swarm.spawn(0, 260, carry.flies, 120);
     this.swarm.tx = 0;
     this.swarm.ty = 300;
     this.swarm.cx = 0;
@@ -93,7 +152,26 @@ export class Game {
     return Math.floor(this.maxY / 10);
   }
   get total() {
-    return this.score + this.heightScore + this.finishBonus;
+    return this.score + this.heightBase + this.heightScore + this.finishBonus;
+  }
+  get isLast() {
+    return this.carry.biome >= BIOMES.length - 1;
+  }
+  /** Carry state into the next biome. */
+  next(): Carry {
+    return {
+      seed: this.carry.seed,
+      biome: this.carry.biome + 1,
+      flies: Math.max(this.swarm.n, 40),
+      blask: Math.max(this.blask, 40),
+      score: this.score + this.finishBonus,
+      lanterns: this.lanternsLit,
+      larvae: this.larvaeWoken,
+      perfects: this.perfects,
+      heightBase: this.heightBase + this.heightScore,
+      reviveUsed: this.reviveUsed,
+      lost: this.lost,
+    };
   }
 
   // ------------------------------------------------------------ input
@@ -156,6 +234,7 @@ export class Game {
       }
     }
     for (const b of this.bats) if (Math.hypot(b.x - cx, b.y - cy) < R + 30) b.flee = 1;
+    HZ.flashHazards(this, cx, cy, R);
     for (const l of this.level.lanterns) if (!l.lit && Math.hypot(l.x - cx, l.y - cy) < R) this.lightLantern(l);
     if (cy - this.shadowY < R + 500) this.shadowY -= perfect ? 320 : 200;
     for (let k = 0; k < (perfect ? 60 : 36); k++) {
@@ -179,11 +258,12 @@ export class Game {
     this.biteSoundCd -= dt;
     this.caughtCd -= dt;
 
-    if (this.state === 'finished') {
+    if (this.state === 'finished' && !this.constellation) {
       s.tx = 0;
       s.ty = s.cy + 120;
       s.guiding = true;
     }
+    if (this.constellation) this.constellation.t += dt;
 
     s.update(dt, this.time, L);
 
@@ -199,6 +279,7 @@ export class Game {
       this.updateShadow(dt);
       this.updateWebs(dt);
       this.updateBats(dt);
+      this.updateZones(dt);
       this.updatePickups(dt);
       this.updateHints();
       if (s.free > 0) this.maxY = Math.max(this.maxY, s.cy);
@@ -206,12 +287,20 @@ export class Game {
         this.state = 'finished';
         this.stateT = 0;
         this.finishBonus = s.free * 3;
+        if (this.isLast) this.formConstellation();
         this.events.push({ t: 'finish' });
       }
     } else {
       this.updateBats(dt);
       this.updateWebs(dt);
     }
+    HZ.updateFrogs(this, dt);
+    HZ.updateDragonflies(this, dt);
+    HZ.updateOwls(this, dt);
+    HZ.updateMoths(this, dt);
+    if (this.state === 'play') HZ.updateGusts(this, dt);
+    else this.wind *= Math.exp(-dt * 2);
+    if (this.biome.rain) HZ.updateRain(this, dt);
     this.updateLanterns(dt);
 
     s.compact();
@@ -253,6 +342,8 @@ export class Game {
     this.shadowY = Math.min(this.shadowY, at.y - 900);
     this.bats.length = 0;
     this.warns.length = 0;
+    this.dragonflies.length = 0;
+    this.moths.length = 0;
     this.blask = Math.max(this.blask, 50);
     this.state = 'play';
     this.stateT = 0;
@@ -266,7 +357,7 @@ export class Game {
   private updateShadow(dt: number) {
     const s = this.swarm;
     const d = this.progress;
-    let speed = 36 + 22 * d;
+    let speed = this.biome.shadowBase + this.biome.shadowRamp * d;
     const gap = s.cy - this.shadowY;
     if (gap > 1250) speed += (gap - 1250) * 1.2;
     if (this.time < 4) speed = 0;
@@ -346,8 +437,8 @@ export class Game {
     const L = this.level;
     const d = this.progress;
     if (this.state === 'play') {
-      for (const z of L.batZones) {
-        if (s.cy < z.y0 || s.cy > z.y1) continue;
+      for (const z of L.zones) {
+        if (z.kind !== 'bats' || s.cy < z.y0 || s.cy > z.y1) continue;
         z.timer -= dt;
         if (z.timer <= 0) {
           z.timer = z.interval * (0.8 + Math.random() * 0.4);
@@ -406,6 +497,51 @@ export class Game {
     }
   }
 
+  private updateZones(dt: number) {
+    const s = this.swarm;
+    for (const z of this.level.zones) {
+      if (z.kind === 'bats' || s.cy < z.y0 || s.cy > z.y1) continue;
+      z.timer -= dt;
+      if (z.timer > 0) continue;
+      z.timer = z.interval * (0.8 + Math.random() * 0.4);
+      if (z.kind === 'dragonflies') {
+        if (this.dragonflies.length < 2) HZ.spawnDragonfly(this);
+      } else if (this.moths.length < 5) HZ.spawnMoth(this);
+    }
+  }
+
+  private formConstellation() {
+    const s = this.swarm;
+    const r = makeRng(hashString(`${this.carry.seed}:sky`));
+    const n = clamp(4 + Math.floor(s.free / 45), 4, 9);
+    const y0 = s.cy + 320;
+    const stars: [number, number][] = [[r.range(-80, 80), y0]];
+    const links: [number, number][] = [];
+    for (let k = 1; k < n; k++) {
+      const from = k > 3 && r.chance(0.3) ? r.int(0, k - 2) : k - 1;
+      let x = 0, y = 0;
+      for (let tries = 0; tries < 20; tries++) {
+        const a = r.range(0, TAU), d = r.range(80, 140);
+        x = clamp(stars[from][0] + Math.cos(a) * d, -210, 210);
+        y = clamp(stars[from][1] + Math.sin(a) * d, y0 - 180, y0 + 240);
+        if (stars.every(([sx, sy]) => Math.hypot(sx - x, sy - y) > 70)) break;
+      }
+      stars.push([x, y]);
+      links.push([from, k]);
+    }
+    const adj = ['Mała', 'Wielka', 'Śpiąca', 'Tańcząca', 'Zbłąkana', 'Cicha', 'Srebrna', 'Północna', 'Leśna', 'Senna'];
+    const noun = ['Ważka', 'Żaba', 'Sowa', 'Paproć', 'Kropla', 'Ćma', 'Trzcina', 'Iskra', 'Gałązka', 'Latarnia', 'Miechunka'];
+    this.constellation = { name: `${r.pick(adj)} ${r.pick(noun)}`, stars, links, t: 0 };
+    let k = 0;
+    for (let i = 0; i < s.n; i++) {
+      const [x, y] = stars[k++ % n];
+      const a = Math.random() * TAU, d = Math.random() * 7;
+      s.formX[i] = x + Math.cos(a) * d;
+      s.formY[i] = y + Math.sin(a) * d;
+    }
+    s.formOn = true;
+  }
+
   private updatePickups(_dt: number) {
     const s = this.swarm;
     const L = this.level;
@@ -454,7 +590,7 @@ export class Game {
       const a = Math.random() * TAU, v = 60 + Math.random() * 180;
       this.particles.push({ x: l.x, y: l.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 0, max: 0.8 + Math.random() * 0.8, size: 3 + Math.random() * 4, r: 1, g: 0.6, b: 0.2, kind: 3, grav: -30, drag: 2 });
     }
-    this.events.push({ t: 'lantern', x: l.x, y: l.y, k: this.lanternsLit });
+    this.events.push({ t: 'lantern', x: l.x, y: l.y, k: this.lanternsLit, star: l.star });
   }
 
   private updateLanterns(dt: number) {
