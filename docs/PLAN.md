@@ -67,6 +67,7 @@ Trudność rośnie z biomem i w jego obrębie (węższe przejścia, więcej zagr
 ## Stan
 
 - Etap 1 zrobiony (prototyp Ściółki).
+- Etap 3 zrobiony: mutacje (1 z 3 między biomami), 4 gatunki z odblokowaniem (Błękitne — Staw, Bursztynowe — ukończona wyprawa, Purpurowe — 15 idealnych rozbłysków), Noce 1–10 (każda wygrana na najwyższej odblokowuje kolejną), wyprawa dnia (ziarno z daty, Zielone, Noc 1), „Twoje niebo”, zapis wyprawy przy lampionach, PWA offline.
 - Etap 2 zrobiony: wszystkie 5 biomów z własną grafiką, zagrożeniami i dźwiękiem, przejścia między biomami, finał z konstelacją (zapisywaną do przyszłego „Twojego nieba”). Strojenie trudności — później, po testach na telefonie.
 
 ## Etapy

@@ -7,7 +7,7 @@ import './style.css';
 
 import { Renderer } from './render/renderer';
 import { Game, newRun, type Carry } from './game/game';
-import { dailySeed, loadMeta, loadRun, loadSky, mutationOffer, saveMeta, saveRun, saveSky, speciesUnlocked, today } from './game/meta';
+import { dailySeed, loadMeta, loadRun, loadSky, mutationOffer, saveMeta, SPECIES, saveRun, saveSky, speciesUnlocked, today } from './game/meta';
 import { BIOMES } from './game/biomes';
 import { Input } from './game/input';
 import { Ui } from './ui/ui';
@@ -26,17 +26,22 @@ try {
 
 const sound = new Sound();
 let mode: Mode = 'menu';
+const meta = loadMeta();
 let game = makeMenuGame();
 let fade = 1;
 let fadeTarget = 0;
 let endShown = false;
 
-const meta = loadMeta();
 
 const ui = new Ui({
   start: (daily) => startRun(daily),
   cont: () => continueRun(),
-  pickSpecies: (id) => { meta.species = id; saveMeta(meta); showMenu(); },
+  pickSpecies: (id) => {
+    meta.species = id;
+    saveMeta(meta);
+    if (mode === 'menu') game.rgb = (SPECIES.find((x) => x.id === id) ?? SPECIES[0]).rgb;
+    showMenu();
+  },
   pickNight: (n) => { meta.nightSel = Math.max(1, Math.min(meta.night, n)); saveMeta(meta); showMenu(); },
   sky: () => ui.showSky(loadSky(), showMenu),
   pause: () => pause(),
@@ -65,7 +70,7 @@ const input = new Input(canvas, {
 });
 
 function makeMenuGame() {
-  const g = new Game(newRun(1234, 0));
+  const g = new Game(newRun(1234, 0, { species: speciesUnlocked(meta, meta.species) ? meta.species : 'zielone' }));
   g.demo = true;
   return g;
 }

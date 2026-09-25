@@ -22,10 +22,15 @@ Dev helper: `window.__roj = { game, renderer }` (e.g. `__roj.game.swarm`, `__roj
 - `src/game/swarm.ts` — fireflies in typed arrays; steering via personal orbiting offsets + **flow field** (`flow.ts`, Dijkstra on a 16-unit grid around the swarm) so the swarm pours around obstacles; SDF collision; Kuramoto phase coupling (`order`, `psi`) drives synchronized blinking and the perfect flash.
 - `src/game/game.ts` — rules for one biome: Shadow (Cień), webs, bats, larvae, lanterns, flash, revive, scoring, events for UI/audio. A run is a chain of `Game`s: `game.next()` returns the `Carry` (flies, Blask, score, height, revive) for the next biome; the last biome ends with `formConstellation()` (swarm `formOn` targets), saved to `roj.sky.v1`.
 - Testing: `#b3` in the URL starts a run at biome 3.
+- `src/game/meta.ts` — everything that outlives a run: `Mods` (numbers the rules read) built by `computeMods(species, night, mutations)`; `SPECIES` (4, unlocks in `speciesUnlocked`), `NIGHTS` (1–10, cumulative, score ×1.15 per night), `MUTATIONS` (pick 1 of 3 between biomes, offer seeded by run seed), meta save `roj.meta.v1`, run save `roj.run.v1` (resume at the last lit lantern via `Game.snapshot()` / `restoreAt()`), sky `roj.sky.v1`, daily seed from the date. New rule knob → add it to `Mods` and read `g.mods.x`, don't hardcode.
 - `src/game/input.ts` — absolute: the target follows the pointer's screen position, re-projected every frame (camera moves); touch aims 46 px above the finger. Second finger / double tap = flash; double click / space = flash.
 - `src/render/renderer.ts` — pipeline: occluders (¼ res) → swarm light (¼) → shadowed light + shafts (¼) → scene (bg, 3 parallax layers from `backdrop.ts`, playfield silhouettes, dynamic silhouettes, additive sprites, haze, Shadow) → bloom → composite (shockwave, CA, ACES, grain). Shaders in `shaders.ts`; silhouette geometry in `mesh.ts` (vertices carry pseudo-normal + edge for rim light).
 - `src/audio/audio.ts` — all sounds synthesized (WebAudio), bells in D minor pentatonic.
 - `src/ui/ui.ts` + `src/style.css` — DOM HUD, hints (shown once, stored in `roj.hints.v1`), menu/pause/end screens. Player-facing text is Polish; code and comments English.
+
+## Offline / PWA
+
+`public/manifest.webmanifest` + icons from `node scripts/icons.mjs`. `dist/sw.js` is generated at build time by the plugin in `vite.config.ts` from `src/sw.template.js` (precaches every built file except unused font subsets; cache name = content hash, old caches are dropped). Registered only in production builds.
 
 ## Rules that bite
 
