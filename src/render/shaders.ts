@@ -272,37 +272,57 @@ void main(){
 }`;
 
 // ---------------------------------------------------------------- the Shadow (Cień)
+// Not a glow: a rolling mass of ink-black smoke that swallows the forest. Its edge is
+// only visible where it eats light (the fireflies' light rims the billows) plus a
+// faint cold ash sheen; wisps curl upward ahead of it; ember eyes deep inside.
 export const SHADOW_FS = `${H}
 ${NOISE}
 in vec2 v_uv;
+uniform sampler2D u_lit;
 uniform vec4 u_view;
 uniform float u_time;
 uniform float u_y;
+uniform vec3 u_swarm;
 out vec4 o;
+float h1(vec2 p){ return vnoise(p * .01) * 6.28; }
 void main(){
   vec2 wp = (v_uv * 2. - 1.) / u_view.zw + u_view.xy;
-  float n1 = fbm(vec2(wp.x * .006, u_time * .22));
-  float n2 = vnoise(vec2(wp.x * .035, u_time * .5));
-  float tend = pow(max(n2 - .35, 0.) / .65, 2.5) * 190.;
-  float edge = u_y + (n1 - .5) * 150. + tend;
+  float t = u_time;
+  // domain-warped billows rolling upward
+  vec2 q = vec2(fbm(wp * .0035 + vec2(0., -t * .12)), fbm(wp * .0035 + vec2(5.2, 1.3) + vec2(t * .07, -t * .1)));
+  float bil = fbm(wp * .006 + q * 1.8 + vec2(0., -t * .22));
+  float edge = u_y + (bil - .5) * 240. + (fbm(vec2(wp.x * .004, t * .15)) - .5) * 120.;
   float dy = wp.y - edge;
-  float a = 1. - smoothstep(-90., 25., dy);
-  float b1 = dy / 30., b2 = (dy + 60.) / 90.;
-  float band = exp(-b1 * b1) + exp(-b2 * b2) * .35;
-  float swirl = fbm(wp * .01 + vec2(0., -u_time * .3));
-  vec3 col = vec3(.28, .06, .48) * band * (.5 + swirl) * 1.4;
-  // faint eyes deep in the dark
+  float body = 1. - smoothstep(-160., 20., dy);
+  // wisps: thin smoke tongues licking up ahead of the mass
+  float wn = fbm(vec2(wp.x * .018 + q.x * 2., wp.y * .005 - t * .5));
+  float wisp = smoothstep(.52, .78, wn) * smoothstep(260., 0., dy) * step(-40., dy);
+  float pre = (1. - smoothstep(0., 280., dy)) * .35;   // the forest dims ahead of it
+  float a = clamp(max(body, pre) + wisp * .75, 0., 1.);
+  // light it eats: fireflies' light catches the billow tops
+  vec4 L = texture(u_lit, v_uv);
+  float rimBand = exp(-dy * dy / 2500.) + wisp * .6;
+  float swirl = fbm(wp * .012 + q * 3. + vec2(0., -t * .35));
+  vec3 col = vec3(.012, .014, .02) * rimBand * (.3 + swirl);               // faint ash sheen
+  col += (L.rgb * .2 + u_swarm * L.a * .3) * rimBand * (.3 + swirl) * .5;  // swarm-lit edge
+  // smouldering cracks under the smoke: where the light it ate still dies out
+  float crack = fbm(wp * .011 + q * 2.5 + vec2(t * .04, -t * .16));
+  float vein = smoothstep(.035, 0., abs(crack - .5));                    // thin glowing seams
+  float patchy = smoothstep(.45, .7, fbm(wp * .004 + vec2(3.1, -t * .08)));   // only some seams glow
+  float ember = vein * patchy * smoothstep(10., -50., dy) * smoothstep(-280., -80., dy);
+  col += vec3(.2, .045, .008) * ember * (.5 + .5 * sin(t * 1.3 + h1(wp)));
+  // ember eyes deep in the dark
   vec2 cell = floor(wp / vec2(140., 110.));
   vec2 fr = fract(wp / vec2(140., 110.)) - .5;
   float h = hash12(cell);
-  float blink = step(.93, fract(u_time * .13 + h * 7.));
+  float blink = step(.93, fract(t * .13 + h * 7.));
   float eyes = 0.;
-  if (h > .72 && dy < -120.) {
+  if (h > .72 && dy < -140.) {
     vec2 e1 = (fr - vec2(-.07, 0.)) * vec2(140., 110.);
     vec2 e2 = (fr - vec2(.07, 0.)) * vec2(140., 110.);
-    eyes = (smoothstep(3.5, 1.5, length(e1 * vec2(1., 1.8))) + smoothstep(3.5, 1.5, length(e2 * vec2(1., 1.8)))) * (1. - blink);
+    eyes = (smoothstep(3.2, 1.2, length(e1 * vec2(1., 2.))) + smoothstep(3.2, 1.2, length(e2 * vec2(1., 2.)))) * (1. - blink);
   }
-  col += vec3(.9, .35, 1.) * eyes * 1.5 * smoothstep(-120., -300., dy);
+  col += vec3(1., .32, .08) * eyes * 1.2 * smoothstep(-140., -320., dy);
   o = vec4(col, a);
 }`;
 

@@ -3,7 +3,6 @@
   --dim: rgba(230, 243, 220, 0.55);
   --glow: #c8ff6e;
   --warm: #ffb35a;
-  --shadow: #b77cff;
   --display: 'Cormorant Garamond', Georgia, serif;
   --body: 'Quicksand', system-ui, sans-serif;
   --safe-top: env(safe-area-inset-top, 0px);
@@ -133,7 +132,7 @@ button, .clickable { pointer-events: auto; }
 
 .danger {
   position: absolute; inset: 0;
-  background: radial-gradient(ellipse at 50% 120%, rgba(120, 40, 200, 0.35), transparent 60%);
+  background: radial-gradient(ellipse at 50% 125%, rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0.25) 45%, transparent 70%);
   opacity: 0; transition: opacity 0.4s;
 }
 

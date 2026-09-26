@@ -386,7 +386,7 @@ export class Renderer {
 
     // the Shadow
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-    this.pShadow.use().f4('u_view', cx, cy, vz, vw).f1('u_time', t).f1('u_y', g.shadowY);
+    this.pShadow.use().tex('u_lit', 0, this.lit.tex).f4('u_view', cx, cy, vz, vw).f1('u_time', t).f1('u_y', g.shadowY).v3('u_swarm', g.rgb);
     this.fullscreen();
     gl.disable(gl.BLEND);
 
