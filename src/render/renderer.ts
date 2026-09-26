@@ -253,6 +253,8 @@ export class Renderer {
 
   // ------------------------------------------------------------ sprites
   private spr(b: DynBuffer, x: number, y: number, size: number, kind: number, r: number, g: number, bl: number, a = 1) {
+    // a NaN here would reach the HDR targets and show up as black blocks on mobile
+    if (!Number.isFinite(x + y + size + r + g + bl + a)) return;
     b.ensure(8);
     const d = b.data;
     let i = b.n;

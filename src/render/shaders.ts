@@ -4,6 +4,12 @@ const H = `#version 300 es
 precision highp float;
 `;
 
+// Mobile GPUs (Mali/Adreno) turn any NaN/Inf into black blocks once bloom spreads it:
+// scrub values before they are stored in a render target.
+const SAFE = `
+vec3 safe(vec3 c){ return mix(vec3(0.), min(c, vec3(256.)), lessThan(abs(c), vec3(1e4))); }
+`;
+
 const NOISE = `
 float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 float vnoise(vec2 p){
@@ -58,7 +64,7 @@ void main(){
   } else if (v_kind < 1.5) {    // bright core
     s = smoothstep(1., .15, d); s *= s;
   } else if (v_kind < 2.5) {    // ring
-    s = exp(-pow((d - .8) * 10., 2.));
+    float q = (d - .8) * 10.; s = exp(-q * q);
   } else if (v_kind < 3.5) {    // sparkle
     vec2 a = abs(v_uv);
     float st = max(exp(-a.x*30.)*exp(-a.y*2.5), exp(-a.y*30.)*exp(-a.x*2.5));
@@ -69,7 +75,7 @@ void main(){
   } else if (v_kind < 6.) {     // progress arc, fraction = kind - 5
     float frac = v_kind - 5.;
     float ang = atan(v_uv.x, v_uv.y) / 6.2831853 + .5;
-    s = exp(-pow((d - .82) * 14., 2.)) * step(1. - frac, ang);
+    float q = (d - .82) * 14.; s = exp(-q * q) * step(1. - frac, ang);
   } else if (v_kind < 6.5) {    // horizontal streak (wind)
     s = exp(-v_uv.y * v_uv.y * 400.) * (1. - abs(v_uv.x));
   } else {                      // vertical streak (rain), brighter head at the bottom
@@ -104,6 +110,7 @@ void main(){
 }`;
 
 export const SIL_FS = `${H}
+${SAFE}
 in vec2 v_nrm;
 in float v_edge;
 in float v_tone;
@@ -121,8 +128,8 @@ uniform vec3 u_topLight;
 out vec4 o;
 void main(){
   vec2 uv = gl_FragCoord.xy / u_res;
-  vec3 L = texture(u_light, uv).rgb;
-  float e = v_edge;
+  vec3 L = safe(texture(u_light, uv).rgb);
+  float e = clamp(v_edge, 0., 1.);
   vec3 n = normalize(vec3(v_nrm * e, 1. - e * .85 + .05));
   vec2 toL = u_lpos - v_world;
   float dl = length(toL);
@@ -146,6 +153,7 @@ void main(){ o = vec4(1.); }`;
 
 // ---------------------------------------------------------------- lit pass
 export const LIT_FS = `${H}
+${SAFE}
 ${NOISE}
 in vec2 v_uv;
 uniform sampler2D u_light;
@@ -174,7 +182,8 @@ void main(){
     float l = dot(texture(u_light, p).rgb, vec3(.3333)) * (1. - texture(u_occ, p).r);
     scat += l * w; ws += w; w *= .9; p += st2;
   }
-  o = vec4(raw * mix(1., vis, u_shadow), scat / ws * mix(1., vis, .6));
+  float sc = scat / ws * mix(1., vis, .6);
+  o = vec4(safe(raw * mix(1., vis, u_shadow)), sc < 1e4 ? sc : 0.);
 }`;
 
 // ---------------------------------------------------------------- background
@@ -214,7 +223,8 @@ void main(){
     float x = v_uv.x * asp;
     float n = fbm(vec2(x * 1.4, u_time * .05));
     float yc = .72 + (n - .5) * .25 + .05 * sin(x * 3. + u_time * .15);
-    float band = exp(-pow((v_uv.y - yc) * 7., 2.));
+    float by = (v_uv.y - yc) * 7.;
+    float band = exp(-by * by);
     float curtain = .5 + .5 * sin(x * 60. + n * 12. + u_time * .4);
     curtain = pow(curtain, 3.) * .6 + .4;
     float up = smoothstep(yc - .03, yc + .18, v_uv.y) * (1. - smoothstep(yc, yc + .35, v_uv.y));
@@ -277,7 +287,8 @@ void main(){
   float edge = u_y + (n1 - .5) * 150. + tend;
   float dy = wp.y - edge;
   float a = 1. - smoothstep(-90., 25., dy);
-  float band = exp(-pow(dy / 30., 2.)) + exp(-pow((dy + 60.) / 90., 2.)) * .35;
+  float b1 = dy / 30., b2 = (dy + 60.) / 90.;
+  float band = exp(-b1 * b1) + exp(-b2 * b2) * .35;
   float swirl = fbm(wp * .01 + vec2(0., -u_time * .3));
   vec3 col = vec3(.28, .06, .48) * band * (.5 + swirl) * 1.4;
   // faint eyes deep in the dark
@@ -297,6 +308,7 @@ void main(){
 
 // ---------------------------------------------------------------- bloom
 export const DOWN_FS = `${H}
+${SAFE}
 in vec2 v_uv;
 uniform sampler2D u_src;
 uniform vec2 u_texel;
@@ -310,7 +322,7 @@ void main(){
   vec3 c = texture(u_src, v_uv + t * vec2(-1.,  1.)).rgb;
   vec3 d = texture(u_src, v_uv + t * vec2( 1.,  1.)).rgb;
   vec3 e = texture(u_src, v_uv).rgb;
-  vec3 s = (a + b + c + d) * .125 + e * .5;
+  vec3 s = safe((a + b + c + d) * .125 + e * .5);
   if (u_pre > .5) {
     float br = max(s.r, max(s.g, s.b));
     float knee = u_thresh * .5;
@@ -343,6 +355,7 @@ void main(){
 
 // ---------------------------------------------------------------- composite
 export const COMPOSITE_FS = `${H}
+${SAFE}
 ${NOISE}
 in vec2 v_uv;
 uniform sampler2D u_scene;
@@ -363,11 +376,12 @@ void main(){
   float asp = u_res.x / u_res.y;
   vec2 dd = (uv - u_shock.xy) * vec2(asp, 1.);
   float r = length(dd);
-  float k = exp(-pow((r - u_shock.z) * 16., 2.)) * u_shock.w;
+  float kq = (r - u_shock.z) * 16.;
+  float k = exp(-kq * kq) * u_shock.w;
   uv -= (dd / (r + 1e-4)) * k * .025 / vec2(asp, 1.);
   vec2 cd = (uv - .5) * (u_ca + k * .02);
   vec3 c = vec3(texture(u_scene, uv + cd).r, texture(u_scene, uv).g, texture(u_scene, uv - cd).b);
-  c += texture(u_bloom, uv).rgb * u_bloomAmt;
+  c = safe(c) + safe(texture(u_bloom, uv).rgb) * u_bloomAmt;
   c *= u_exposure;
   c = aces(c);
   float l = dot(c, vec3(.2126, .7152, .0722));

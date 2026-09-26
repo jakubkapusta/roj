@@ -52,6 +52,7 @@ What moves what: biome length (`biomeLen`) and fly speed set time; bite caps (`b
 ## Rules that bite
 
 - Colors in shaders are **linear**; the composite tone-maps and applies gamma. Dark scene colors are tiny numbers (0.005–0.03) on purpose.
+- GLSL `pow(x, y)` is undefined for `x < 0` and returns NaN on Mali/Adreno (desktop GPUs hide it): square with `q * q`. Any NaN/Inf in an HDR target turns into flickering black blocks once bloom spreads it; `safe()` in `shaders.ts` scrubs light, bloom and composite inputs, and `spr()` drops non-finite sprites.
 - Hidden screens must not catch taps: `.screen` uses `visibility: hidden` when not `.show`.
 - Performance target: 60 fps on a mid phone. Renderer lowers `quality` automatically; fireflies contribute light at ¼ res and every 2nd fly above 420.
 - Browser pane mobile emulation shows black bands at the right/bottom edge in screenshots; it's the pane, not the game.
