@@ -1,13 +1,37 @@
 // Biome 2: the pond. Reeds in mist over black water, frogs on leaves, dragonflies.
 
 import type { Level } from '../level';
+import { BAL } from '../balance';
 import type { P } from '../../render/mesh';
 import { pieceLantern, pieceWebField, sequence, zonePiece, type Piece } from './shared';
 import { clearing } from './sciolka';
 
+/** Reeds already standing, per level: two stems too close make a trap the swarm can't leave. */
+const placed = new WeakMap<Level, { x0: number; x1: number; y0: number; y1: number }[]>();
+const MIN_GAP = 80;
+
+function spot(L: Level, x: number, y0: number, h: number, lean: number) {
+  const list = placed.get(L) ?? [];
+  placed.set(L, list);
+  const lo = L.wallAt(-1, y0 + h / 2) + 40, hi = L.wallAt(1, y0 + h / 2) - 40;
+  for (const dx of [0, MIN_GAP, -MIN_GAP, 2 * MIN_GAP, -2 * MIN_GAP]) {
+    const xa = x + dx, xb = xa + lean * h;
+    const x0 = Math.min(xa, xb), x1 = Math.max(xa, xb);
+    if (x0 < lo || x1 > hi) continue;
+    const clash = list.some((o) => o.y0 < y0 + h && o.y1 > y0 && x0 < o.x1 + MIN_GAP && x1 > o.x0 - MIN_GAP);
+    if (!clash) {
+      list.push({ x0, x1, y0, y1: y0 + h + 50 });
+      return xa;
+    }
+  }
+  return null;
+}
+
 /** Tall reed stem standing in the playfield; solid. Returns top point. */
-function reed(L: Level, x: number, y0: number, h: number, lean: number, r0 = 6, cattail = false) {
+function reed(L: Level, x0: number, y0: number, h: number, lean: number, r0 = 6, cattail = false) {
   const r = L.rng;
+  const x = spot(L, x0, y0, h, lean);
+  if (x === null) return { x: x0, y: y0 + h, r: 0 };
   const pts: P[] = [];
   const seg = 10;
   const ph = r.range(0, 6);
@@ -135,10 +159,11 @@ export function genStaw(L: Level) {
   const y = sequence(L, {
     start: start(L),
     lanternFirst: 1900,
-    lanternGap: [2200, 2700],
+    lanternGap: BAL.lanternGap,
     lantern: pieceLantern,
-    force: { 1: 'frogs', 3: 'dragonflies' },
     pieces: { reeds: pieceReeds, fallen: pieceFallen, frogs: pieceFrogs, dragonflies: pieceDragonflies, webs: pieceWebField, larvae: pieceLarvaeReeds },
+    threats: BAL.threats.staw,
+    earliest: { dragonflies: 0.12, webs: 0.3 },
     weights: (d) => [
       ['reeds', 3],
       ['fallen', 1.5 + d],

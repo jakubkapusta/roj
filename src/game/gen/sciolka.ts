@@ -2,6 +2,7 @@
 
 import { clamp } from '../../core/math';
 import type { Level } from '../level';
+import { BAL } from '../balance';
 import { pickGlow } from '../level';
 import { hangingVines, pieceLantern, pieceWeb, pieceWebField, sequence, zonePiece, type Piece } from './shared';
 
@@ -103,10 +104,11 @@ export function genSciolka(L: Level) {
   const y = sequence(L, {
     start: start(L),
     lanternFirst: 2000,
-    lanternGap: [2100, 2600],
+    lanternGap: BAL.lanternGap,
     lantern: pieceLantern,
-    force: { 2: 'web' },
     pieces: { branches: pieceBranches, squeeze: pieceSqueeze, web: pieceWeb, webField: pieceWebField, shelves: pieceShelves, bats: pieceBats, larvae: pieceLarvae },
+    threats: BAL.threats.sciolka,
+    earliest: { bats: 0.2, webField: 0.15 },
     weights: (d) => [
       ['branches', 3],
       ['squeeze', 1.2 + d * 1.6],

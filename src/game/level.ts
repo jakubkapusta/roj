@@ -5,7 +5,8 @@ import { makeRng, type Rng } from '../core/rng';
 import { fbm1 } from '../core/noise';
 import { clamp, distToSegment } from '../core/math';
 import { MeshBuilder, type P } from '../render/mesh';
-import type { BiomeDef } from './biomes';
+import { BIOMES, type BiomeDef } from './biomes';
+import { BAL } from './balance';
 import { GENERATORS } from './gen';
 
 export const HALF_W = 300;
@@ -72,7 +73,7 @@ export class Level {
   sdf: Float32Array;
 
   constructor(seed: number, readonly biome: BiomeDef) {
-    const height = biome.height;
+    const height = Math.round(BAL.biomeLen[Math.max(0, BIOMES.indexOf(biome))] * BAL.lenMul);
     this.seed = seed;
     this.height = height;
     this.rng = makeRng(seed);
@@ -94,6 +95,10 @@ export class Level {
     for (let c = 0; c * CHUNK < height + 2000; c++) this.shapes.push([]);
     GENERATORS[biome.id](this);
     if (biome.wallStyle === 'bark') this.addBurls();
+    // same amount of larvae on every level of a biome
+    const want = BAL.larvae[Math.max(0, BIOMES.indexOf(biome))];
+    const have = this.larvae.reduce((a, l) => a + l.n, 0);
+    if (want && have) for (const l of this.larvae) l.n = Math.max(2, Math.round((l.n * want) / have));
     this.cols = Math.ceil((HALF_W * 2) / CELL) + 1;
     this.rows = Math.ceil((height + 1000) / CELL) + 1;
     this.sdf = new Float32Array(this.cols * this.rows);
@@ -251,7 +256,7 @@ export class Level {
     const spokes: number[] = [];
     const n = rng.int(9, 13);
     for (let i = 0; i < n; i++) spokes.push((i / n) * Math.PI * 2 + rng.range(-0.15, 0.15));
-    return { x, y, r, spokes, rings: rng.int(5, 7), anchors: [], caught: 0, cap: Math.round(26 + d * 14), broken: false, burn: 0, shake: 0 };
+    return { x, y, r, spokes, rings: rng.int(5, 7), anchors: [], caught: 0, cap: Math.round(BAL.web.cap + d * BAL.web.capRamp), broken: false, burn: 0, shake: 0 };
   }
 
   // ------------------------------------------------------------ SDF

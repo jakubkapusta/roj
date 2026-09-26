@@ -1,6 +1,7 @@
 // Biome 4: the storm. Rain comes in waves; big leaves are roofs to hide under.
 
 import type { Level } from '../level';
+import { BAL } from '../balance';
 import { addGust, hangingVines, pieceLantern, pieceWebField, sequence, zonePiece, type Piece } from './shared';
 import { pieceBranches, pieceSqueeze, clearing } from './sciolka';
 
@@ -56,9 +57,10 @@ export function genBurza(L: Level) {
   const y = sequence(L, {
     start: start(L),
     lanternFirst: 1900,
-    lanternGap: [2300, 2800],
+    lanternGap: BAL.lanternGap,
     lantern: pieceLantern,
     pieces: { shelters: pieceShelters, branches: pieceBranches, squeeze: pieceSqueeze, gusts: pieceGusts, bats: pieceBats, webs: pieceWebField },
+    threats: BAL.threats.burza,
     weights: (d) => [
       ['shelters', 3],
       ['branches', 2],

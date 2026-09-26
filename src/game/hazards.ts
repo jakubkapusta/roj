@@ -5,6 +5,7 @@ import { clamp, TAU } from '../core/math';
 import { FREE } from './swarm';
 import type { Game } from './game';
 import { HALF_W } from './level';
+import { BAL } from './balance';
 
 export type Dragonfly = {
   x: number; y: number; vx: number; vy: number; t: number;
@@ -15,18 +16,18 @@ export type Dragonfly = {
 export type Moth = { x: number; y: number; vx: number; vy: number; t: number; eaten: number; phase: number; eatT: number; leave: boolean };
 export type Drop = { x: number; y: number; vy: number };
 
-const FROG_RANGE = 300;
 
 /** Kill fly i with a small burst of embers. */
-function killFly(g: Game, i: number, r: number, gg: number, b: number) {
+function killFly(g: Game, i: number, r: number, gg: number, b: number, cause: string) {
   const s = g.swarm;
   s.kill(i);
   g.lost++;
+  g.lostBy[cause] = (g.lostBy[cause] ?? 0) + 1;
   g.emit(s.x[i], s.y[i], r, gg, b, 0, 10, 0.5, 1, 10);
 }
 
 /** Kill free flies within `rad` of segment a-b, up to `max`. Returns kills. */
-function killAlong(g: Game, ax: number, ay: number, bx: number, by: number, rad: number, max: number, col: [number, number, number]) {
+function killAlong(g: Game, ax: number, ay: number, bx: number, by: number, rad: number, max: number, col: [number, number, number], cause: string) {
   const s = g.swarm;
   const dx = bx - ax, dy = by - ay;
   const l2 = dx * dx + dy * dy || 1;
@@ -39,7 +40,7 @@ function killAlong(g: Game, ax: number, ay: number, bx: number, by: number, rad:
     const qx = ax + dx * t - s.x[i], qy = ay + dy * t - s.y[i];
     if (qx * qx + qy * qy < r2) {
       if (Math.random() < g.mods.dodge) continue;
-      killFly(g, i, col[0], col[1], col[2]);
+      killFly(g, i, col[0], col[1], col[2], cause);
       n++;
     }
   }
@@ -63,11 +64,11 @@ export function updateFrogs(g: Game, dt: number) {
       case 0: {
         f.cool -= dt;
         const d = Math.hypot(s.cx - m.x, s.cy - m.y);
-        if (f.cool <= 0 && d < FROG_RANGE && s.free > 0 && g.state === 'play') {
+        if (f.cool <= 0 && d < BAL.frog.range && s.free > 0 && g.state === 'play') {
           // aim where the swarm is heading, but never beyond reach
           let tx = s.cx + s.vcx * 0.45, ty = s.cy + s.vcy * 0.45;
           const dx = tx - m.x, dy = ty - m.y, l = Math.hypot(dx, dy) || 1;
-          const reach = Math.min(l + 40, FROG_RANGE + 40);
+          const reach = Math.min(l + 40, BAL.frog.range + 40);
           tx = m.x + (dx / l) * reach;
           ty = m.y + (dy / l) * reach;
           f.tx = tx;
@@ -79,19 +80,19 @@ export function updateFrogs(g: Game, dt: number) {
         break;
       }
       case 1:
-        if (f.t > 0.85 * g.mods.warn) { f.state = 2; f.t = 0; g.events.push({ t: 'frogStrike' }); }
+        if (f.t > BAL.frog.aim * g.mods.warn) { f.state = 2; f.t = 0; g.events.push({ t: 'frogStrike' }); }
         break;
       case 2: {
         const k = Math.min(1, f.t / 0.1);
         const ex = m.x + (f.tx - m.x) * k, ey = m.y + (f.ty - m.y) * k;
-        const n = killAlong(g, m.x, m.y, ex, ey, 14, 18 - f.eaten, [1, 0.5, 0.6]);
+        const n = killAlong(g, m.x, m.y, ex, ey, 14, BAL.frog.bites * g.biteMul - f.eaten, [1, 0.5, 0.6], 'frog');
         f.eaten += n;
         if (n) g.events.push({ t: 'bite', n });
         if (f.t > 0.16) { f.state = 3; f.t = 0; }
         break;
       }
       case 3:
-        if (f.t > 0.25) { f.state = 0; f.t = 0; f.cool = (2.4 + Math.random() * 1.2) * g.mods.hazard; f.eaten = 0; }
+        if (f.t > 0.25) { f.state = 0; f.t = 0; f.cool = BAL.frog.cool * (1 + Math.random() * 0.5) * g.mods.hazard; f.eaten = 0; }
         break;
       case 4:
         if (f.t > 3) { f.state = 0; f.t = 0; f.cool = 1; }
@@ -136,12 +137,12 @@ export function updateDragonflies(g: Game, dt: number) {
       if (d.state === 3 && Math.abs(d.y - g.camY) > g.viewH) g.dragonflies.splice(k, 1);
     } else if (d.state === 1) {
       d.x += Math.sin(d.t * 40) * 0.6;
-      if (d.t > 0.55 * g.mods.warn) {
+      if (d.t > BAL.dragonfly.aim * g.mods.warn) {
         d.state = 2;
         d.t = 0;
         const dx = d.tx - d.x, dy = d.ty - d.y, l = Math.hypot(dx, dy) || 1;
-        d.vx = (dx / l) * 880;
-        d.vy = (dy / l) * 880;
+        d.vx = (dx / l) * BAL.dragonfly.dash;
+        d.vy = (dy / l) * BAL.dragonfly.dash;
         // overshoot through the target
         d.tx += (dx / l) * 110;
         d.ty += (dy / l) * 110;
@@ -151,7 +152,7 @@ export function updateDragonflies(g: Game, dt: number) {
       const ox = d.x, oy = d.y;
       d.x += d.vx * dt;
       d.y += d.vy * dt;
-      const n = killAlong(g, ox, oy, d.x, d.y, 16, 12 - d.bites, [0.4, 0.9, 1]);
+      const n = killAlong(g, ox, oy, d.x, d.y, 16, BAL.dragonfly.bites * g.biteMul - d.bites, [0.4, 0.9, 1], 'dragonfly');
       d.bites += n;
       if (n) g.events.push({ t: 'bite', n });
       if ((d.tx - d.x) * d.vx + (d.ty - d.y) * d.vy <= 0) {
@@ -185,7 +186,7 @@ export function updateOwls(g: Game, dt: number) {
         g.events.push({ t: 'owl' });
       }
     } else if (o.state === 1) {
-      if (o.t > 1.35 * g.mods.warn) {
+      if (o.t > BAL.owl.warn * g.mods.warn) {
         o.state = 2;
         o.t = 0;
         // bezier through the predicted swarm position, exit on the other side
@@ -206,7 +207,7 @@ export function updateOwls(g: Game, dt: number) {
       const nx = (1 - u) * (1 - u) * o.x + 2 * (1 - u) * u * cx + u * u * p.ex;
       const ny = (1 - u) * (1 - u) * o.y + 2 * (1 - u) * u * cy + u * u * p.ey;
       if (!p.veer) {
-        const n = killAlong(g, o.px, o.py, nx, ny, 34, 45 - o.bites, [1, 0.8, 0.5]);
+        const n = killAlong(g, o.px, o.py, nx, ny, 34, BAL.owl.bites * g.biteMul - o.bites, [1, 0.8, 0.5], 'owl');
         o.bites += n;
         if (n) g.events.push({ t: 'bite', n });
         o.px = nx;
@@ -263,13 +264,13 @@ export function updateRain(g: Game, dt: number) {
   g.rainT -= dt;
   if (g.rainT <= 0) {
     if (g.rainPhase === 0) { g.rainPhase = 1; g.rainT = 1.8; g.events.push({ t: 'rainWarn' }); }
-    else if (g.rainPhase === 1) { g.rainPhase = 2; g.rainT = 4.5 + g.progress * 2.5; }
-    else { g.rainPhase = 0; g.rainT = 7 + Math.random() * 4 - g.progress * 2; }
+    else if (g.rainPhase === 1) { g.rainPhase = 2; g.rainT = BAL.rain.pourTime + g.progress * BAL.rain.pourRamp; }
+    else { g.rainPhase = 0; g.rainT = BAL.rain.calmTime + Math.random() * 4 - g.progress * 2; }
   }
   const target = g.rainPhase === 2 ? 1 : g.rainPhase === 1 ? 0.35 : 0.12;
   g.rain += (target - g.rain) * Math.min(1, dt * 2);
   // lethal drops
-  const rate = 4 + g.rain * 34;
+  const rate = BAL.rain.calm + g.rain * BAL.rain.pour;
   let spawn = rate * dt;
   while (spawn > 0) {
     if (Math.random() < spawn) {
@@ -283,7 +284,11 @@ export function updateRain(g: Game, dt: number) {
     const oy = d.y;
     d.y += d.vy * dt;
     let dead = d.y < g.camY - g.viewH / 2 - 60;
-    if (!dead && L.sdfAt(d.x, d.y) < 0) {
+    // swept test so fast drops can't tunnel through a thin leaf
+    let hitY = NaN;
+    for (let yy = oy; yy >= d.y; yy -= 8) if (L.sdfAt(d.x, yy) < 0) { hitY = yy; break; }
+    if (!dead && hitY === hitY) {
+      d.y = hitY;
       dead = true;
       for (let j = 0; j < 3; j++) g.particles.push({ x: d.x, y: d.y, vx: (Math.random() - 0.5) * 140, vy: 60 + Math.random() * 90, life: 0, max: 0.35, size: 3, r: 0.4, g: 0.5, b: 0.6, kind: 0, grav: 500, drag: 0 });
     }
@@ -291,7 +296,7 @@ export function updateRain(g: Game, dt: number) {
       for (let i = 0; i < s.n; i++) {
         if (s.state[i] !== FREE) continue;
         if (Math.abs(s.x[i] - d.x) < 6 && s.y[i] <= oy && s.y[i] >= d.y) {
-          killFly(g, i, 0.5, 0.7, 1);
+          killFly(g, i, 0.5, 0.7, 1, 'rain');
           hits++;
           dead = true;
           break;
@@ -338,7 +343,7 @@ export function updateMoths(g: Game, dt: number) {
       ty += Math.sin(m.t * 2.2 + m.phase) * 40;
     }
     const dx = tx - m.x, dy = ty - m.y, l = Math.hypot(dx, dy) || 1;
-    const sp = m.leave ? 260 : 235;
+    const sp = m.leave ? 260 : BAL.moth.speed;
     m.vx += ((dx / l) * sp - m.vx) * dt * 2.2 + Math.sin(m.t * 13 + m.phase) * 400 * dt;
     m.vy += ((dy / l) * sp - m.vy) * dt * 2.2 + Math.cos(m.t * 11 + m.phase) * 400 * dt;
     m.x += m.vx * dt;
@@ -350,14 +355,14 @@ export function updateMoths(g: Game, dt: number) {
           if (s.state[i] !== FREE) continue;
           const ddx = s.x[i] - m.x, ddy = s.y[i] - m.y;
           if (ddx * ddx + ddy * ddy < 24 * 24) {
-            killFly(g, i, 0.8, 0.7, 0.9);
+            killFly(g, i, 0.8, 0.7, 0.9, 'moth');
             m.eaten++;
-            m.eatT = 0.3;
+            m.eatT = BAL.moth.eatEvery;
             g.events.push({ t: 'bite', n: 1 });
             break;
           }
         }
-        if (m.eaten >= 8) m.leave = true;
+        if (m.eaten >= BAL.moth.bites * g.biteMul) m.leave = true;
       }
     }
     if (m.leave && Math.abs(m.y - g.camY) > g.viewH) g.moths.splice(k, 1);

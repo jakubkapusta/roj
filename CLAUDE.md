@@ -8,6 +8,7 @@ Browser game (phone portrait first, laptop too): guide a swarm of fireflies up t
 npm run dev          # vite --host
 npx tsc --noEmit     # typecheck after every change
 npm run build        # typecheck + static build
+npm run sim          # headless balance report (see "Balance")
 ```
 
 Dev helper: `window.__roj = { game, renderer }` (e.g. `__roj.game.swarm`, `__roj.game.level.webs`).
@@ -27,6 +28,22 @@ Dev helper: `window.__roj = { game, renderer }` (e.g. `__roj.game.swarm`, `__roj
 - `src/render/renderer.ts` — pipeline: occluders (¼ res) → swarm light (¼) → shadowed light + shafts (¼) → scene (bg, 3 parallax layers from `backdrop.ts`, playfield silhouettes, dynamic silhouettes, additive sprites, haze, Shadow) → bloom → composite (shockwave, CA, ACES, grain). Shaders in `shaders.ts`; silhouette geometry in `mesh.ts` (vertices carry pseudo-normal + edge for rim light).
 - `src/audio/audio.ts` — all sounds synthesized (WebAudio), bells in D minor pentatonic.
 - `src/ui/ui.ts` + `src/style.css` — DOM HUD, hints (shown once, stored in `roj.hints.v1`), menu/pause/end screens. Player-facing text is Polish; code and comments English.
+
+## Balance
+
+All pace/difficulty numbers live in `src/game/balance.ts` (`BAL`): biome lengths, fly speed, Shadow, economy (Blask, flash cost, larvae, mercy), and per-hazard knobs. Don't hardcode new numbers in rules — add a knob.
+
+`npm run sim` plays whole runs headless with `src/sim/bot.ts` (a player model; `skill` 0..1 scales reaction time, noticing threats, flash timing) on all CPU cores and prints: win / game-over rate, delivered swarm %, per-biome time, deaths, flies in→out, losses by cause, and a skill-band breakdown.
+
+```bash
+npm run sim -- --runs 480                       # mixed skill 0.35–0.85 (the default)
+npm run sim -- --runs 96 --biome 2 --skill 0.9  # one biome, fresh swarm
+BAL='{"shadowMul":1.1,"frog":{"bites":15}}' npm run sim   # try knobs without editing
+```
+
+Targets (first pass, met by the bot mix): 2–3 min per biome (2:07–2:17), ~10% game over (10.8%, falling with skill), 30–45% of the starting swarm delivered (32%), finishing with ≥ the starting swarm rare (3.5%), finishing without losses ~never (0%). Real play is logged to `roj.stats.v1`; `#stats` in the URL shows it in the same shape as the sim, to recalibrate the bot against a human.
+
+What moves what: biome length (`biomeLen`) and fly speed set time; bite caps (`bat/frog/dragonfly/owl/moth.bites`, scaled by `biteScale`), `web.catch`, `rain.pour` set attrition; `carryMin`, `mercy`, `biteScale[0]` decide whether a weakened swarm can still die (game-over rate); `larvae`/`larvaMul` set gains; `threats` fixes how many of each threat a level has. Runs are reproducible per seed (the sim seeds `Math.random`). If the bot gets stuck somewhere, it's usually a level trap or a flow-field bug, not balance — trace one seed before tuning.
 
 ## Offline / PWA
 

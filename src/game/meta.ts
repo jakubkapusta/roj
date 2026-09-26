@@ -2,6 +2,7 @@
 
 import { hashString, makeRng } from '../core/rng';
 import type { V3 } from './biomes';
+import { BAL } from './balance';
 
 // ------------------------------------------------------------ modifiers
 /** Numbers the rules read; species, night and mutations each tweak them. */
@@ -32,9 +33,9 @@ export type Mods = {
 
 export function baseMods(): Mods {
   return {
-    startFlies: 200, startBlask: 60, flashCost: 35, perfectCost: 10, flashR: 1, perfectCos: 0.72,
-    light: 1, speed: 1, coupling: 1, larva: 1, larvaKeep: 1, lanternBlask: 40, lanternFlies: 0,
-    webCatch: 0.5, webCap: 0, shadow: 1, hazard: 1, warn: 1, regen: 1, dodge: 0, revive: true, score: 1,
+    startFlies: BAL.startFlies, startBlask: BAL.startBlask, flashCost: BAL.flashCost, perfectCost: BAL.perfectCost, flashR: 1, perfectCos: 0.72,
+    light: 1, speed: 1, coupling: 1, larva: BAL.larvaMul, larvaKeep: 1, lanternBlask: BAL.lanternBlask, lanternFlies: 0,
+    webCatch: BAL.web.catch, webCap: 0, shadow: BAL.shadowMul, hazard: 1, warn: 1, regen: BAL.regen, dodge: 0, revive: true, score: 1,
   };
 }
 
@@ -49,11 +50,11 @@ export const SPECIES: Species[] = [
   },
   {
     id: 'bursztynowe', name: 'Bursztynowe', desc: 'Jasne i liczne (240), ale wolniejsze.', rgb: [1.0, 0.68, 0.22], unlock: 'Ukończ całą wyprawę',
-    apply: (m) => { m.light *= 1.3; m.startFlies = 240; m.speed *= 0.9; },
+    apply: (m) => { m.light *= 1.3; m.startFlies = Math.round(BAL.startFlies * 1.2); m.speed *= 0.9; },
   },
   {
     id: 'purpurowe', name: 'Purpurowe', desc: 'Mistrzowie rozbłysków: tańsze, szybciej się zgrywają. Tylko 160 świetlików.', rgb: [0.82, 0.45, 1.0], unlock: '15 idealnych rozbłysków',
-    apply: (m) => { m.flashCost -= 10; m.coupling *= 1.6; m.perfectCos = 0.55; m.startBlask = 100; m.startFlies = 160; },
+    apply: (m) => { m.flashCost -= 10; m.coupling *= 1.6; m.perfectCos = 0.55; m.startBlask = 100; m.startFlies = Math.round(BAL.startFlies * 0.8); },
   },
 ];
 
@@ -202,4 +203,18 @@ export function saveRun(r: RunSave | null) {
     if (r) localStorage.setItem(RUN_KEY, JSON.stringify(r));
     else localStorage.removeItem(RUN_KEY);
   } catch { /* ignore */ }
+}
+
+// ------------------------------------------------------------ real-play stats (compare with `npm run sim`)
+export type BiomeStat = { date: string; biome: number; time: number; fliesIn: number; fliesOut: number; gained: number; lostBy: Record<string, number>; died: boolean; species: string; night: number };
+
+export function logBiome(st: BiomeStat) {
+  try {
+    const all: BiomeStat[] = JSON.parse(localStorage.getItem('roj.stats.v1') || '[]');
+    all.push(st);
+    localStorage.setItem('roj.stats.v1', JSON.stringify(all.slice(-300)));
+  } catch { /* ignore */ }
+}
+export function loadStats(): BiomeStat[] {
+  try { return JSON.parse(localStorage.getItem('roj.stats.v1') || '[]'); } catch { return []; }
 }

@@ -17,30 +17,43 @@ export class FlowField {
   dx = new Float32Array(N);
   dy = new Float32Array(N);
   valid = false;
+  private level: Level | null = null;
   private heapI = new Int32Array(N * 8);
   private heapD = new Float32Array(N * 8);
   private hn = 0;
 
-  build(level: Level, tx: number, ty: number, cy: number) {
+  build(level: Level, tx: number, ty: number, sx: number, sy: number) {
+    const cy = sy;
+    this.level = level;
     this.y0 = Math.floor((cy - 520) / CELL) * CELL;
     const { x0, y0, dist, blocked } = this;
     for (let r = 0; r < ROWS; r++) {
       const y = y0 + (r + 0.5) * CELL;
       for (let c = 0; c < COLS; c++) {
         const i = r * COLS + c;
-        blocked[i] = level.sdfAt(x0 + (c + 0.5) * CELL, y) < 5 ? 1 : 0;
+        blocked[i] = level.sdfAt(x0 + (c + 0.5) * CELL, y) < 3 ? 1 : 0;
         dist[i] = INF;
+      }
+    }
+    // a target inside a solid: walk back toward the swarm to the first free spot,
+    // so we never pick a cell on the far side of a thin obstacle
+    if (level.sdfAt(tx, ty) < 5) {
+      const dx = sx - tx, dy = sy - ty, l = Math.hypot(dx, dy) || 1;
+      for (let d = 8; d < l; d += 8) {
+        const px = tx + (dx / l) * d, py = ty + (dy / l) * d;
+        if (level.sdfAt(px, py) >= 6) { tx = px; ty = py; break; }
       }
     }
     let sc = Math.floor((tx - x0) / CELL), sr = Math.floor((ty - y0) / CELL);
     if (sc < 0 || sc >= COLS || sr < 0 || sr >= ROWS) { this.valid = false; return; }
-    // target inside a solid -> nearest free cell
     if (blocked[sr * COLS + sc]) {
       let best = -1, bd = INF;
-      for (let dr = -5; dr <= 5; dr++) for (let dc = -5; dc <= 5; dc++) {
+      for (let dr = -3; dr <= 3; dr++) for (let dc = -3; dc <= 3; dc++) {
         const r = sr + dr, c = sc + dc;
         if (r < 0 || r >= ROWS || c < 0 || c >= COLS || blocked[r * COLS + c]) continue;
-        const d = dr * dr + dc * dc;
+        // prefer cells toward the swarm
+        const wx = x0 + (c + 0.5) * CELL, wy = y0 + (r + 0.5) * CELL;
+        const d = dr * dr + dc * dc + Math.hypot(wx - sx, wy - sy) * 0.02;
         if (d < bd) { bd = d; best = r * COLS + c; }
       }
       if (best < 0) { this.valid = false; return; }
@@ -65,6 +78,10 @@ export class FlowField {
           const j = rr * COLS + cc;
           if (blocked[j]) continue;
           if (dr && dc && (blocked[r * COLS + cc] || blocked[rr * COLS + c])) continue; // no corner cutting
+          // thin obstacles (reeds, twigs) can sit between two free cell centers
+          const mx = x0 + (c + 0.5 + dc * 0.5) * CELL, my = y0 + (r + 0.5 + dr * 0.5) * CELL;
+          if (level.sdfAt(mx, my) < 1.5) continue;
+          if (dr && dc && (level.sdfAt(mx - dc * 4, my - dr * 4) < 1.5 || level.sdfAt(mx + dc * 4, my + dr * 4) < 1.5)) continue;
           const nd = d + (dr && dc ? 1.4142 : 1);
           if (nd < dist[j]) {
             dist[j] = nd;
@@ -112,13 +129,40 @@ export class FlowField {
       const cc = c + (k & 1), rr = r + (k >> 1);
       const i = rr * COLS + cc;
       if (this.blocked[i] || this.dist[i] >= INF) continue;
+      // skip cells on the other side of a thin obstacle
+      const wx0 = this.x0 + (cc + 0.5) * CELL, wy0 = this.y0 + (rr + 0.5) * CELL;
+      if (this.level!.sdfAt((x + wx0) / 2, (y + wy0) / 2) < 1) continue;
       const w = ((k & 1) ? tx : 1 - tx) * ((k >> 1) ? ty : 1 - ty) + 1e-4;
       wx += this.dx[i] * w;
       wy += this.dy[i] * w;
       wd += this.dist[i] * w;
       ws += w;
     }
-    if (ws <= 1e-3) return false;
+    if (ws <= 1e-3) {
+      // squeezed against a solid: head for the best free cell nearby
+      let bi = -1, bd = INF;
+      const cc0 = Math.round(fx), rr0 = Math.round(fy);
+      for (let dr = -2; dr <= 2; dr++) for (let dc = -2; dc <= 2; dc++) {
+        const r2 = rr0 + dr, c2 = cc0 + dc;
+        if (r2 < 0 || r2 >= ROWS || c2 < 0 || c2 >= COLS) continue;
+        const i = r2 * COLS + c2;
+        if (this.blocked[i] || this.dist[i] >= INF) continue;
+        // only cells we can actually reach in a straight line (no hopping over a reed)
+        const wx = this.x0 + (c2 + 0.5) * CELL, wy = this.y0 + (r2 + 0.5) * CELL;
+        let clear = true;
+        for (let q = 0.25; q < 1 && clear; q += 0.25) if (this.level!.sdfAt(x + (wx - x) * q, y + (wy - y) * q) < 1) clear = false;
+        if (!clear) continue;
+        const d = this.dist[i] + Math.hypot(dr, dc);
+        if (d < bd) { bd = d; bi = i; }
+      }
+      if (bi < 0) return false;
+      const wx = this.x0 + ((bi % COLS) + 0.5) * CELL, wy = this.y0 + (Math.floor(bi / COLS) + 0.5) * CELL;
+      const l = Math.hypot(wx - x, wy - y) || 1;
+      out.d = bd * CELL;
+      out.x = (wx - x) / l;
+      out.y = (wy - y) / l;
+      return true;
+    }
     const l = Math.hypot(wx, wy);
     out.d = (wd / ws) * CELL;
     out.x = l > 1e-4 ? wx / l : 0;

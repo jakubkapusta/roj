@@ -7,7 +7,7 @@ import './style.css';
 
 import { Renderer } from './render/renderer';
 import { Game, newRun, type Carry } from './game/game';
-import { dailySeed, loadMeta, loadRun, loadSky, mutationOffer, saveMeta, SPECIES, saveRun, saveSky, speciesUnlocked, today } from './game/meta';
+import { dailySeed, loadMeta, logBiome, loadStats, loadRun, loadSky, mutationOffer, saveMeta, SPECIES, saveRun, saveSky, speciesUnlocked, today } from './game/meta';
 import { BIOMES } from './game/biomes';
 import { Input } from './game/input';
 import { Ui } from './ui/ui';
@@ -215,6 +215,12 @@ function checkEnd() {
   endShown = true;
   mode = 'end';
   input.reset();
+  if (!game.demo) {
+    logBiome({
+      date: today(), biome: game.carry.biome, time: Math.round(game.time), fliesIn: game.fliesIn, fliesOut: won ? game.swarm.n : 0,
+      gained: game.gained, lostBy: game.lostBy, died: !won, species: game.carry.species, night: game.carry.night,
+    });
+  }
   const unlocks: string[] = [];
   const had = { blue: speciesUnlocked(meta, 'blekitne'), amber: speciesUnlocked(meta, 'bursztynowe'), purple: speciesUnlocked(meta, 'purpurowe') };
   if (won && game.biome.id === 'staw') meta.staw = true;
@@ -286,7 +292,8 @@ function frame(now: number) {
   requestAnimationFrame(frame);
 }
 
-showMenu();
+if (location.hash === '#stats') ui.showStats(loadStats(), () => { location.hash = ''; showMenu(); });
+else showMenu();
 requestAnimationFrame(frame);
 
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {

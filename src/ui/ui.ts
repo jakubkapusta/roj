@@ -2,7 +2,7 @@
 
 import type { Game, Carry } from '../game/game';
 import { BIOMES, type BiomeDef } from '../game/biomes';
-import { MUTATIONS, NIGHTS, SPECIES, speciesUnlocked, today, type Meta, type Mutation, type RunSave, type SkyEntry } from '../game/meta';
+import { MUTATIONS, NIGHTS, SPECIES, speciesUnlocked, today, type BiomeStat, type Meta, type Mutation, type RunSave, type SkyEntry } from '../game/meta';
 
 export type MenuState = { meta: Meta; save: RunSave | null; sky: number };
 
@@ -333,6 +333,39 @@ export class Ui {
     parts.push(b);
     this.endEl.append(...parts);
     this.show(this.endEl, true);
+  }
+
+  /** `#stats`: your real runs in the same shape as the simulator report. */
+  showStats(all: BiomeStat[], back: () => void) {
+    this.menu.classList.remove('menu');
+    this.menu.innerHTML = '';
+    const wrap = el('div', 'sky');
+    const head = el('div', 'sky-head');
+    head.append(el('h2', 'h2 sm', 'Statystyki'));
+    const close = el('button', 'btn ghost small', 'Wróć');
+    close.addEventListener('click', back);
+    head.append(close);
+    wrap.append(head);
+    const avg = (a: number[]) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
+    const mmss = (t: number) => `${Math.floor(t / 60)}:${String(Math.round(t % 60)).padStart(2, '0')}`;
+    let html = `<table class="stats-t"><tr><th>biom</th><th>n</th><th>zgasł</th><th>czas</th><th>wlot→wylot</th><th>+larwy</th><th>straty wg przyczyny</th></tr>`;
+    BIOMES.forEach((b, i) => {
+      const rs = all.filter((x) => x.biome === i);
+      if (!rs.length) return;
+      const fin = rs.filter((x) => !x.died);
+      const causes: Record<string, number> = {};
+      for (const x of rs) for (const [k, v] of Object.entries(x.lostBy)) causes[k] = (causes[k] ?? 0) + v;
+      const tot = Object.values(causes).reduce((a, v) => a + v, 0) || 1;
+      const cs = Object.entries(causes).sort((a, c) => c[1] - a[1]).map(([k, v]) => `${k} ${Math.round((100 * v) / tot)}%`).join(', ');
+      html += `<tr><td>${b.name}</td><td>${rs.length}</td><td>${Math.round((100 * (rs.length - fin.length)) / rs.length)}%</td><td>${mmss(avg(fin.map((x) => x.time)))}</td><td>${Math.round(avg(rs.map((x) => x.fliesIn)))}→${Math.round(avg(fin.map((x) => x.fliesOut)))}</td><td>${Math.round(avg(rs.map((x) => x.gained)))}</td><td>${cs}</td></tr>`;
+    });
+    html += '</table>';
+    wrap.append(el('div', 'stats-wrap', all.length ? html : '<p class="lead">Brak danych — zagraj kilka wypraw.</p>'));
+    const copy = el('button', 'btn ghost small', 'Kopiuj surowe dane');
+    copy.addEventListener('click', () => navigator.clipboard?.writeText(JSON.stringify(all)));
+    wrap.append(copy);
+    this.menu.append(wrap);
+    this.show(this.menu, true);
   }
 
   /** "Twoje niebo": every finished run as a constellation on one night sky. */

@@ -4,6 +4,7 @@
 import { clamp, smoothstep, TAU } from '../core/math';
 import type { Level } from './level';
 import { FlowField } from './flow';
+import { BAL } from './balance';
 
 export const MAX_FLIES = 1000;
 export const FREE = 0, STUCK = 1, DEAD = 2;
@@ -30,6 +31,10 @@ export class Swarm {
   inWeb = new Int16Array(MAX_FLIES);
   hue = new Float32Array(MAX_FLIES);
   formX = new Float32Array(MAX_FLIES);
+  /** seconds a fly has been pressing without getting anywhere, and its sideways wiggle */
+  stuckT = new Float32Array(MAX_FLIES);
+  wig = new Float32Array(MAX_FLIES);
+  wigDir = new Float32Array(MAX_FLIES);
   formY = new Float32Array(MAX_FLIES);
   /** Every fly seeks its own formation point (the final constellation). */
   formOn = false;
@@ -70,7 +75,7 @@ export class Swarm {
       this.oy[i] = Math.sin(b) * rb;
       this.orb[i] = (Math.random() - 0.5) * 1.2;
       this.agil[i] = 2.6 + Math.random() * 3.4;
-      this.spd[i] = 175 + Math.random() * 85;
+      this.spd[i] = BAL.flySpeed[0] + Math.random() * (BAL.flySpeed[1] - BAL.flySpeed[0]);
       this.w1[i] = 0.8 + Math.random() * 2.2;
       this.w2[i] = Math.random() * TAU;
       this.ph[i] = Math.random() * TAU;
@@ -81,6 +86,8 @@ export class Swarm {
       this.web[i] = -1;
       this.inWeb[i] = -1;
       this.hue[i] = Math.random();
+      this.stuckT[i] = 0;
+      this.wig[i] = 0;
     }
   }
 
@@ -100,7 +107,7 @@ export class Swarm {
   }
 
   private copy(from: number, to: number) {
-    const arrs = [this.x, this.y, this.vx, this.vy, this.ox, this.oy, this.orb, this.agil, this.spd, this.w1, this.w2, this.ph, this.om, this.bright, this.timer, this.hue, this.formX, this.formY];
+    const arrs = [this.x, this.y, this.vx, this.vy, this.ox, this.oy, this.orb, this.agil, this.spd, this.w1, this.w2, this.ph, this.om, this.bright, this.timer, this.hue, this.formX, this.formY, this.stuckT, this.wig, this.wigDir];
     for (const a of arrs) a[to] = a[from];
     this.state[to] = this.state[from];
     this.web[to] = this.web[from];
@@ -154,7 +161,7 @@ export class Swarm {
     this.flashGlow = Math.max(0, this.flashGlow - dt * 2.2);
     this.flowT -= dt;
     if (level && (this.flowT <= 0 || Math.hypot(tx - this.flowTx, ty - this.flowTy) > 14)) {
-      this.flow.build(level, tx, ty, this.cy);
+      this.flow.build(level, tx, ty, this.cx, this.cy);
       this.flowT = 0.07;
       this.flowTx = tx;
       this.flowTy = ty;
@@ -197,11 +204,20 @@ export class Swarm {
         // far from the target: follow the flow around obstacles
         const want = Math.min(this.spd[i] * this.speedMul, fs.d * 3.6);
         // keep a loose slot around the swarm center so the stream stays a swarm
+        // (only near the center: a split swarm must not be pulled into the empty middle)
         let sx = this.cx + ox * rad - this.x[i], sy = this.cy + oy * rad - this.y[i];
         const sl = Math.hypot(sx, sy);
+        const sk = sl > rad * 2.5 ? 0 : 1.1;
         if (sl > 80) { sx *= 80 / sl; sy *= 80 / sl; }
-        dx = fs.x * want + sx * 1.1;
-        dy = fs.y * want + sy * 1.1;
+        dx = fs.x * want + sx * sk;
+        dy = fs.y * want + sy * sk;
+        // pressed against something for a while: wiggle sideways like an insect feeling its way
+        if (this.wig[i] > 0) {
+          this.wig[i] -= dt;
+          const wd = this.wigDir[i];
+          dx = dx * 0.3 - fs.y * wd * 190;
+          dy = dy * 0.3 + fs.x * wd * 190;
+        }
       } else {
         dx = gx - this.x[i];
         dy = gy - this.y[i];
@@ -240,6 +256,16 @@ export class Swarm {
           this.vy[i] *= 0.96;
         }
       }
+      // progress check for the wiggle
+      const moved = Math.hypot(nx - this.x[i], ny - this.y[i]) / Math.max(dt, 1e-3);
+      if (moved < 30 && Math.hypot(tx - nx, ty - ny) > rad + 40) {
+        this.stuckT[i] += dt;
+        if (this.stuckT[i] > 0.45 && this.wig[i] <= 0) {
+          this.wig[i] = 0.5 + Math.random() * 0.5;
+          this.wigDir[i] = Math.random() < 0.5 ? -1 : 1;
+          this.stuckT[i] = 0;
+        }
+      } else this.stuckT[i] = Math.max(0, this.stuckT[i] - dt * 2);
       this.x[i] = nx;
       this.y[i] = ny;
     }

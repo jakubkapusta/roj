@@ -1,6 +1,7 @@
 // Biome 3: the canopy. Thick boughs with leaf clusters, moonlight, owls and gusts.
 
 import type { Level } from '../level';
+import { BAL } from '../balance';
 import { addGust, hangingVines, pieceLantern, pieceWebField, sequence, zonePiece, type Piece } from './shared';
 import { pieceSqueeze, pieceLarvae, clearing } from './sciolka';
 
@@ -73,13 +74,13 @@ export function genKorony(L: Level) {
   const y = sequence(L, {
     start: 700,
     lanternFirst: 1700,
-    lanternGap: [2300, 2800],
+    lanternGap: BAL.lanternGap,
     lantern: pieceLantern,
-    force: { 1: 'owl', 3: 'gusts' },
     pieces: { boughs: pieceBoughs, owl: pieceOwl, gusts: pieceGusts, bats: pieceBats, squeeze: pieceSqueeze, larvae: pieceLarvae, webs: pieceWebField },
+    threats: BAL.threats.korony,
     weights: (d) => [
       ['boughs', 3],
-      ['owl', 1.2 + d * 1.2],
+      ['owl', 1.6 + d * 1.5],
       ['gusts', 1.2 + d],
       ['bats', 1 + d * 1.5],
       ['squeeze', 1 + d],

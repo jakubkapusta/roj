@@ -2,51 +2,73 @@
 
 import { clamp } from '../../core/math';
 import type { Level } from '../level';
+import { BAL } from '../balance';
 
 export type Piece = (L: Level, y: number, d: number) => number;
 
 export type SeqOpts = {
   start: number;
   pieces: Record<string, Piece>;
+  /** filler weights by progress d (0..1); threat kinds listed in `threats` are ignored here */
   weights: (d: number) => [string, number][];
   lanternFirst: number;
   lanternGap: [number, number];
   lantern: Piece;
-  /** force a piece at a given index (to introduce a threat early) */
-  force?: Record<number, string>;
+  /**
+   * Threat pieces and how many of each the biome gets. They are spread evenly over the
+   * biome (only their order is random), so every level has the same amount of danger.
+   * `earliest` keeps a kind out of the first part of the biome (0..1).
+   */
+  threats: Record<string, number>;
+  earliest?: Record<string, number>;
   endMargin?: number;
 };
 
-/** Fill the level with weighted pieces, a lantern every so often. Returns the y where it stopped. */
+/** Fill the level: lanterns every so often, threats at evenly spaced slots, fillers between. */
 export function sequence(L: Level, o: SeqOpts) {
   const r = L.rng;
   let y = o.start;
   let nextLantern = o.lanternFirst;
   let last = '';
-  let no = 0;
   const end = L.height - (o.endMargin ?? 1100);
+
+  // shuffle the threats, then push kinds that may not appear yet further back
+  const plan: string[] = [];
+  for (const [k, n] of Object.entries(o.threats)) for (let i = 0; i < n; i++) plan.push(k);
+  for (let i = plan.length - 1; i > 0; i--) {
+    const j = Math.floor(r() * (i + 1));
+    [plan[i], plan[j]] = [plan[j], plan[i]];
+  }
+  const span = end - o.start;
+  const slotY = plan.map((_, i) => o.start + span * ((i + 0.35 + r() * 0.3) / plan.length));
+  for (let i = 0; i < plan.length; i++) {
+    const min = o.earliest?.[plan[i]] ?? 0;
+    if ((slotY[i] - o.start) / span >= min) continue;
+    const j = plan.findIndex((k, jj) => jj > i && (slotY[i] - o.start) / span >= (o.earliest?.[k] ?? 0));
+    if (j > 0) [plan[i], plan[j]] = [plan[j], plan[i]];
+  }
+  let ti = 0;
+
   while (y < end) {
     const d = y / L.height;
     let kind: string;
     if (y >= nextLantern) {
       kind = '__lantern';
       nextLantern = y + r.range(o.lanternGap[0], o.lanternGap[1]);
-    } else if (o.force?.[no]) {
-      kind = o.force[no];
+    } else if (ti < plan.length && y >= slotY[ti] - 150) {
+      kind = plan[ti++];
     } else {
-      const w = o.weights(d);
+      const w = o.weights(d).filter(([k]) => !(k in o.threats) && k !== last);
       let tot = 0;
-      for (const e of w) if (e[0] !== last) tot += e[1];
+      for (const e of w) tot += e[1];
       let pick = r() * tot;
       kind = w[0][0];
       for (const e of w) {
-        if (e[0] === last) continue;
         pick -= e[1];
         if (pick <= 0) { kind = e[0]; break; }
       }
     }
     last = kind;
-    no++;
     y = kind === '__lantern' ? o.lantern(L, y, d) : o.pieces[kind](L, y, d);
   }
   return y;
@@ -117,8 +139,8 @@ export function zonePiece(kind: 'bats' | 'dragonflies' | 'moths', hint: string, 
   return (L, y, d) => {
     const r = L.rng;
     const len = 1300 + d * 500;
-    const base = kind === 'bats' ? 2.4 : kind === 'dragonflies' ? 3.2 : 2.2;
-    L.zones.push({ kind, y0: y, y1: y + len, interval: clamp(base - d * 1.3, 1.1, base), timer: 0.8 });
+    const base = kind === 'bats' ? BAL.bat.interval : kind === 'dragonflies' ? BAL.dragonfly.interval : BAL.moth.interval;
+    L.zones.push({ kind, y0: y, y1: y + len, interval: clamp(base - d * BAL.zoneRamp, 1.1, base), timer: 0.8 });
     L.hints.push({ y: y - 150, id: hint });
     deco(L, y, len);
     if (r.chance(0.7)) L.larvae.push({ x: r.range(-150, 150), y: y + len * 0.5, n: r.int(6, 10), awake: false, t: 0 });
@@ -138,5 +160,5 @@ export function hangingVines(L: Level, y: number, len: number) {
 /** Wind zone: periodic gusts pushing the swarm sideways. */
 export function addGust(L: Level, y0: number, y1: number, d: number) {
   const r = L.rng;
-  L.gusts.push({ y0, y1, dir: r.chance(0.5) ? -1 : 1, strength: 420 + d * 260, period: r.range(4.5, 6.5), phase: r.range(0, 3) });
+  L.gusts.push({ y0, y1, dir: r.chance(0.5) ? -1 : 1, strength: BAL.gust.strength + d * BAL.gust.ramp, period: r.range(4.5, 6.5), phase: r.range(0, 3) });
 }

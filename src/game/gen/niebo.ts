@@ -1,6 +1,7 @@
 // Biome 5: above the clouds. Cloud islands, cold currents, moths drawn to light, star lanterns.
 
 import type { Level } from '../level';
+import { BAL } from '../balance';
 import { addGust, sequence, zonePiece, type Piece } from './shared';
 
 /** Cloud island: overlapping puffs, solid. */
@@ -68,15 +69,15 @@ export function genNiebo(L: Level) {
   const y = sequence(L, {
     start: 700,
     lanternFirst: 1600,
-    lanternGap: [2000, 2500],
+    lanternGap: BAL.lanternGap,
     lantern: pieceStar,
-    force: { 1: 'moths' },
     pieces: { islands: pieceIslands, moths: pieceMoths, currents: pieceCurrents, stardust: pieceStardust },
+    threats: BAL.threats.niebo,
     weights: (d) => [
       ['islands', 3],
-      ['moths', 1.5 + d * 2],
+      ['moths', 1.8 + d * 2],
       ['currents', 1 + d],
-      ['stardust', 1.2],
+      ['stardust', 0.7],
     ],
     endMargin: 1400,
   });

@@ -9,7 +9,6 @@ export type BiomeDef = {
   name: string;
   lead: string;
   threats: string[];
-  height: number;
   wallStyle: 'bark' | 'reeds' | 'clouds';
   backdrop: 'forest' | 'reeds' | 'canopy' | 'clouds';
   pal: {
@@ -43,7 +42,6 @@ export const BIOMES: BiomeDef[] = [
     name: 'Ściółka',
     lead: 'Dno lasu. Grzyby świecą, a w ciemności czekają pajęczyny.',
     threats: ['Pajęczyny', 'Nietoperze', 'Cień'],
-    height: 14000,
     wallStyle: 'bark',
     backdrop: 'forest',
     pal: {
@@ -65,7 +63,7 @@ export const BIOMES: BiomeDef[] = [
     aurora: 0,
     wind: 1,
     rain: false,
-    shadowBase: 36,
+    shadowBase: 31,
     shadowRamp: 22,
   },
   {
@@ -73,7 +71,6 @@ export const BIOMES: BiomeDef[] = [
     name: 'Staw',
     lead: 'Trzciny we mgle nad czarną wodą. Żaby nie śpią.',
     threats: ['Żaby', 'Ważki', 'Gęsta mgła'],
-    height: 14000,
     wallStyle: 'reeds',
     backdrop: 'reeds',
     pal: {
@@ -95,7 +92,7 @@ export const BIOMES: BiomeDef[] = [
     aurora: 0,
     wind: 1.2,
     rain: false,
-    shadowBase: 40,
+    shadowBase: 34,
     shadowRamp: 22,
   },
   {
@@ -103,7 +100,6 @@ export const BIOMES: BiomeDef[] = [
     name: 'Korony',
     lead: 'Wysoko w gałęziach księżyc przebija liście. Uważaj na sowę.',
     threats: ['Sowa', 'Podmuchy wiatru', 'Nietoperze'],
-    height: 15000,
     wallStyle: 'bark',
     backdrop: 'canopy',
     pal: {
@@ -133,7 +129,6 @@ export const BIOMES: BiomeDef[] = [
     name: 'Burza',
     lead: 'Ulewa gasi światło. Chowaj rój pod liśćmi, gdy nadchodzi fala deszczu.',
     threats: ['Deszcz', 'Błyskawice', 'Wiatr'],
-    height: 15000,
     wallStyle: 'bark',
     backdrop: 'forest',
     pal: {
@@ -155,7 +150,7 @@ export const BIOMES: BiomeDef[] = [
     aurora: 0,
     wind: 2.4,
     rain: true,
-    shadowBase: 44,
+    shadowBase: 36,
     shadowRamp: 24,
   },
   {
@@ -163,7 +158,6 @@ export const BIOMES: BiomeDef[] = [
     name: 'Nad chmurami',
     lead: 'Ponad chmurami świecą gwiazdy. Ćmy lecą do każdego światła.',
     threats: ['Ćmy', 'Zimne prądy'],
-    height: 11000,
     wallStyle: 'clouds',
     backdrop: 'clouds',
     pal: {

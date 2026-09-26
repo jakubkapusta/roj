@@ -6,6 +6,7 @@ import { Level, HALF_W, type Lantern } from './level';
 import { Swarm, FREE, STUCK } from './swarm';
 import { BIOMES, type BiomeDef } from './biomes';
 import * as HZ from './hazards';
+import { BAL } from './balance';
 import { computeMods, SPECIES, type Mods, type RunSave } from './meta';
 
 /** What a run carries from one biome to the next. */
@@ -78,8 +79,7 @@ export type BatWarn = { side: number; y: number; t: number; speed: number };
 export type Shock = { x: number; y: number; t: number; R: number; perfect: boolean };
 
 
-const MAX_ALIVE = 800;
-const BAT_BITES = 16;
+const MAX_ALIVE = () => BAL.maxFlies;
 
 export class Game {
   level: Level;
@@ -103,6 +103,10 @@ export class Game {
   larvaeWoken = 0;
   perfects = 0;
   lost = 0;
+  /** flies lost per cause, for the simulator */
+  lostBy: Record<string, number> = {};
+  /** flies gained from larvae and lanterns in this biome */
+  gained = 0;
   reviveUsed = false;
   lastLantern: Lantern | null = null;
   bats: Bat[] = [];
@@ -133,6 +137,8 @@ export class Game {
   boltX = 0;
   boltSeed = 0;
   constellation: Constellation | null = null;
+  /** flies at the start of this biome (for stats) */
+  fliesIn = 0;
 
   constructor(carry: Carry) {
     this.carry = carry;
@@ -153,6 +159,7 @@ export class Game {
     if (this.mods.larvaKeep < 1) this.level.larvae = this.level.larvae.filter((_, i) => ((i * 2654435761) >>> 0) / 4294967296 < this.mods.larvaKeep || i < 2);
     this.lost = carry.lost;
     this.swarm.spawn(0, 260, carry.flies, 120);
+    this.fliesIn = carry.flies;
     this.swarm.tx = 0;
     this.swarm.ty = 300;
     this.swarm.cx = 0;
@@ -168,6 +175,11 @@ export class Game {
   }
   get total() {
     return Math.round((this.score + this.heightBase + this.heightScore + this.finishBonus) * this.mods.score);
+  }
+  /** Bite caps grow with the swarm (sqrt), so big swarms lose more and small ones don't spiral. */
+  get biteMul() {
+    const [lo, hi] = BAL.biteScale;
+    return Math.min(hi, Math.max(lo, Math.sqrt(this.swarm.free / BAL.biteRef)));
   }
   get isLast() {
     return this.carry.biome >= BIOMES.length - 1;
@@ -215,7 +227,7 @@ export class Game {
     return {
       seed: this.carry.seed,
       biome: this.carry.biome + 1,
-      flies: Math.max(this.swarm.n, 40),
+      flies: Math.max(this.swarm.n, BAL.carryMin),
       blask: Math.max(this.blask, 40),
       score: this.score + this.finishBonus,
       lanterns: this.lanternsLit,
@@ -417,11 +429,11 @@ export class Game {
     const d = this.progress;
     let speed = (this.biome.shadowBase + this.biome.shadowRamp * d) * this.mods.shadow;
     const gap = s.cy - this.shadowY;
-    if (gap > 1250) speed += (gap - 1250) * 1.2;
+    if (gap > BAL.shadowLeash) speed += (gap - BAL.shadowLeash) * BAL.shadowCatchUp;
     if (this.time < 4) speed = 0;
     this.shadowY += speed * dt;
     const kill = this.shadowY + 12;
-    const p = 1 - Math.exp(-2.8 * dt);
+    const p = 1 - Math.exp(-BAL.shadowKill * dt);
     let n = 0;
     for (let i = 0; i < s.n; i++) {
       if (s.state[i] === 2) continue;
@@ -433,6 +445,7 @@ export class Game {
     }
     if (n) {
       this.lost += n;
+      this.lostBy.shadow = (this.lostBy.shadow ?? 0) + n;
       this.shadowAcc += n;
     }
     if (this.shadowAcc > 0 && this.biteSoundCd <= 0) {
@@ -482,9 +495,10 @@ export class Game {
       }
     }
     for (let i = 0; i < s.n; i++) {
-      if (s.state[i] === STUCK && s.timer[i] > 5) {
+      if (s.state[i] === STUCK && s.timer[i] > BAL.web.starve) {
         s.kill(i);
         this.lost++;
+        this.lostBy.web = (this.lostBy.web ?? 0) + 1;
         this.emit(s.x[i], s.y[i], 1, 0.5, 0.2, 0, 10, 0.8, 1, 20);
       }
     }
@@ -502,7 +516,7 @@ export class Game {
           z.timer = z.interval * this.mods.hazard * (0.8 + Math.random() * 0.4);
           const side = Math.random() < 0.5 ? -1 : 1;
           const y = clamp(s.cy + (Math.random() * 340 - 80), this.camY - this.viewH / 2 + 100, this.camY + this.viewH / 2 - 100);
-          this.warns.push({ side, y, t: 0, speed: 300 + d * 90 });
+          this.warns.push({ side, y, t: 0, speed: BAL.bat.speed + d * BAL.bat.speedRamp });
           this.events.push({ t: 'batWarn', side });
         }
       }
@@ -510,7 +524,7 @@ export class Game {
     for (let k = this.warns.length - 1; k >= 0; k--) {
       const w = this.warns[k];
       w.t += dt;
-      if (w.t >= 1.1 * this.mods.warn) {
+      if (w.t >= BAL.bat.warn * this.mods.warn) {
         this.warns.splice(k, 1);
         // bats come out from behind the side trunks
         const x = w.side * (HALF_W + 40);
@@ -535,8 +549,8 @@ export class Game {
       const wob = Math.cos(b.t * 5.5 + b.phase) * 70;
       b.x += b.vx * dt + (-b.vy / sp) * wob * dt;
       b.y += b.vy * dt + (b.vx / sp) * wob * dt;
-      if (b.flee <= 0 && b.bites < BAT_BITES && this.state === 'play') {
-        for (let i = 0; i < s.n && b.bites < BAT_BITES; i++) {
+      if (b.flee <= 0 && b.bites < BAL.bat.bites * this.biteMul && this.state === 'play') {
+        for (let i = 0; i < s.n && b.bites < BAL.bat.bites * this.biteMul; i++) {
           if (s.state[i] !== FREE) continue;
           const dx = s.x[i] - b.x, dy = s.y[i] - b.y;
           if (dx * dx + dy * dy < 26 * 26) {
@@ -553,6 +567,7 @@ export class Game {
     }
     if (bitten) {
       this.lost += bitten;
+      this.lostBy.bat = (this.lostBy.bat ?? 0) + bitten;
       this.events.push({ t: 'bite', n: bitten });
     }
   }
@@ -566,7 +581,10 @@ export class Game {
       z.timer = z.interval * this.mods.hazard * (0.8 + Math.random() * 0.4);
       if (z.kind === 'dragonflies') {
         if (this.dragonflies.length < 2) HZ.spawnDragonfly(this);
-      } else if (this.moths.length < 5) HZ.spawnMoth(this);
+      } else if (this.moths.length < 7) {
+        HZ.spawnMoth(this);
+        if (Math.random() < 0.3 + this.progress * 0.5) HZ.spawnMoth(this);
+      }
     }
   }
 
@@ -606,15 +624,16 @@ export class Game {
     const s = this.swarm;
     const L = this.level;
     if (s.free === 0) return;
-    const mercy = s.free < 80 ? 2 : s.free < 150 ? 1.4 : 1;
+    const mercy = BAL.mercy.find(([below]) => s.free < below)?.[1] ?? 1;
     for (const lv of L.larvae) {
       if (lv.awake) continue;
       if (Math.abs(lv.y - s.cy) > 400) continue;
       const d = Math.hypot(lv.x - s.cx, lv.y - s.cy);
       if (d < s.radius + 45) {
         lv.awake = true;
-        const n = Math.min(Math.round(lv.n * mercy * this.mods.larva), MAX_ALIVE - s.n);
+        const n = Math.min(Math.round(lv.n * mercy * this.mods.larva), MAX_ALIVE() - s.n);
         if (n > 0) s.spawn(lv.x, lv.y, n, 140);
+        this.gained += Math.max(0, n);
         this.larvaeWoken += n;
         this.score += 5 * n;
         for (let k = 0; k < 18; k++) {
@@ -645,7 +664,7 @@ export class Game {
     this.lanternsLit++;
     this.lastLantern = l;
     this.blask = Math.min(100, this.blask + this.mods.lanternBlask);
-    if (this.mods.lanternFlies) this.swarm.spawn(l.x, l.y, Math.min(this.mods.lanternFlies, MAX_ALIVE - this.swarm.n), 150);
+    if (this.mods.lanternFlies) this.swarm.spawn(l.x, l.y, Math.min(this.mods.lanternFlies, MAX_ALIVE() - this.swarm.n), 150);
     this.score += 100;
     for (let k = 0; k < 40; k++) {
       const a = Math.random() * TAU, v = 60 + Math.random() * 180;
